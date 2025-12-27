@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -32,7 +33,7 @@ The restore process:
   4. Restores files to their original locations
 
 Use --dry-run to preview what would be restored without making changes.
-Use --interactive to confirm each file before restoring.`,
+Use --interactive to pick/drop files in your editor (git-rebase style).`,
 	Args: cobra.ExactArgs(1),
 	RunE: runRestore,
 }
@@ -158,27 +159,42 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Confirm restore
-	fmt.Println("\n⚠️  WARNING: This will restore files to their original locations!")
-	fmt.Println("   Existing files may be overwritten.")
-	fmt.Print("\nDo you want to continue? [y/N]: ")
+	// Interactive mode - let user pick/drop files
+	filesToRestore := meta.Files
+	if restoreInteractive {
+		selected, err := interactivePickFiles(meta.Files, tempDir)
+		if err != nil {
+			return fmt.Errorf("interactive selection failed: %w", err)
+		}
+		if len(selected) == 0 {
+			fmt.Println("No files selected. Restore cancelled.")
+			return nil
+		}
+		filesToRestore = selected
+		fmt.Printf("\n✓ Selected %d files to restore\n", len(filesToRestore))
+	} else {
+		// Non-interactive - confirm restore
+		fmt.Println("\n⚠️  WARNING: This will restore files to their original locations!")
+		fmt.Println("   Existing files may be overwritten.")
+		fmt.Print("\nDo you want to continue? [y/N]: ")
 
-	reader := bufio.NewReader(os.Stdin)
-	response, err := reader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("failed to read input: %w", err)
-	}
+		reader := bufio.NewReader(os.Stdin)
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read input: %w", err)
+		}
 
-	response = strings.TrimSpace(strings.ToLower(response))
-	if response != "y" && response != "yes" {
-		fmt.Println("Restore cancelled.")
-		return nil
+		response = strings.TrimSpace(strings.ToLower(response))
+		if response != "y" && response != "yes" {
+			fmt.Println("Restore cancelled.")
+			return nil
+		}
 	}
 
 	// Restore files
 	fmt.Println("\n🔄 Restoring files...")
 
-	for _, fileInfo := range meta.Files {
+	for _, fileInfo := range filesToRestore {
 		backupFilePath := filepath.Join(extractDir, fileInfo.BackupPath)
 		destPath := fileInfo.OriginalPath
 
@@ -186,46 +202,6 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		if strings.HasPrefix(destPath, "~") {
 			homeDir, _ := os.UserHomeDir()
 			destPath = filepath.Join(homeDir, destPath[1:])
-		}
-
-		// Interactive mode - ask for confirmation
-		if restoreInteractive {
-			fmt.Printf("\nRestore %s? [y/N]: ", fileInfo.OriginalPath)
-			response, err := reader.ReadString('\n')
-			if err != nil {
-				fmt.Printf("  ⚠️  Skipping %s: %v\n", fileInfo.OriginalPath, err)
-				skippedCount++
-				continue
-			}
-
-			response = strings.TrimSpace(strings.ToLower(response))
-			if response != "y" && response != "yes" {
-				fmt.Printf("  ⊘ Skipped %s\n", fileInfo.OriginalPath)
-				skippedCount++
-				continue
-			}
-		}
-
-		// Check if file exists
-		if _, err := os.Stat(destPath); err == nil {
-			if !restoreInteractive {
-				// In non-interactive mode, ask once about overwrites
-				fmt.Printf("  ⚠️  %s already exists\n", destPath)
-				fmt.Print("     Overwrite? [y/N]: ")
-				response, err := reader.ReadString('\n')
-				if err != nil {
-					fmt.Printf("  ⊘ Skipped %s\n", fileInfo.OriginalPath)
-					skippedCount++
-					continue
-				}
-
-				response = strings.TrimSpace(strings.ToLower(response))
-				if response != "y" && response != "yes" {
-					fmt.Printf("  ⊘ Skipped %s\n", fileInfo.OriginalPath)
-					skippedCount++
-					continue
-				}
-			}
 		}
 
 		// Restore based on type
@@ -284,4 +260,122 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	fmt.Println("   4. Test SSH connections and other credentials")
 
 	return nil
+}
+
+func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata.FileInfo, error) {
+	// Create restore plan file
+	planPath := filepath.Join(tempDir, "RESTORE_PLAN")
+
+	var content strings.Builder
+	content.WriteString("# Stash Restore Plan\n")
+	content.WriteString("# \n")
+	content.WriteString("# Commands:\n")
+	content.WriteString("#   pick = restore this file\n")
+	content.WriteString("#   drop = skip this file\n")
+	content.WriteString("# \n")
+	content.WriteString("# Lines starting with # are ignored\n")
+	content.WriteString("#\n\n")
+
+	for _, fileInfo := range files {
+		fileType := "FILE"
+		if fileInfo.IsDir {
+			fileType = "DIR "
+		}
+		size := metadata.FormatSize(fileInfo.Size)
+		content.WriteString(fmt.Sprintf("pick [%s] %s (%s)\n", fileType, fileInfo.OriginalPath, size))
+	}
+
+	if err := os.WriteFile(planPath, []byte(content.String()), 0644); err != nil {
+		return nil, fmt.Errorf("failed to create restore plan: %w", err)
+	}
+
+	// Get editor
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if editor == "" {
+		editor = "vim"
+	}
+
+	fmt.Println("\n📝 Opening restore plan in editor...")
+	fmt.Printf("   Editor: %s\n", editor)
+	fmt.Println("   Change 'pick' to 'drop' to skip files")
+	fmt.Println("   Save and close when done")
+
+	// Open editor
+	cmd := exec.Command(editor, planPath)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("editor failed: %w", err)
+	}
+
+	// Parse edited file
+	planContent, err := os.ReadFile(planPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read restore plan: %w", err)
+	}
+
+	// Build map of original paths to file info
+	fileMap := make(map[string]metadata.FileInfo)
+	for _, f := range files {
+		fileMap[f.OriginalPath] = f
+	}
+
+	// Parse selections
+	var selected []metadata.FileInfo
+	scanner := bufio.NewScanner(strings.NewReader(string(planContent)))
+	lineNum := 0
+
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip comments and empty lines
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Parse line: "pick [TYPE] /path/to/file (size)"
+		parts := strings.Fields(line)
+		if len(parts) < 3 {
+			fmt.Printf("⚠️  Warning: skipping malformed line %d: %s\n", lineNum, line)
+			continue
+		}
+
+		action := parts[0]
+		if action != "pick" && action != "drop" {
+			fmt.Printf("⚠️  Warning: unknown action '%s' on line %d, treating as 'drop'\n", action, lineNum)
+			continue
+		}
+
+		// Extract path - everything between "]" and "("
+		restOfLine := strings.Join(parts[1:], " ")
+		startIdx := strings.Index(restOfLine, "]")
+		endIdx := strings.LastIndex(restOfLine, "(")
+
+		if startIdx == -1 || endIdx == -1 || startIdx >= endIdx {
+			fmt.Printf("⚠️  Warning: couldn't parse path on line %d\n", lineNum)
+			continue
+		}
+
+		path := strings.TrimSpace(restOfLine[startIdx+1 : endIdx])
+
+		if action == "pick" {
+			if fileInfo, ok := fileMap[path]; ok {
+				selected = append(selected, fileInfo)
+			} else {
+				fmt.Printf("⚠️  Warning: file not found in backup: %s\n", path)
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("failed to parse restore plan: %w", err)
+	}
+
+	return selected, nil
 }
