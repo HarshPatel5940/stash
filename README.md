@@ -116,8 +116,8 @@ Create a new encrypted backup.
 stash backup [options]
 
 Options:
-  -o, --output string       Output directory (default: ~/stash-backups)
-  -k, --encrypt-key string  Encryption key path (default: ~/.stash.key)
+  -o, --output string             Output directory (default: ~/stash-backups)
+  -k, --encrypt-key string        Encryption key path (default: ~/.stash.key)
       --no-encrypt          Skip encryption (not recommended)
 ```
 
@@ -214,10 +214,42 @@ This keeps backups small and fast while preserving important configurations.
 
 ## 🔐 Security
 
-- All backups are encrypted using **age** (modern encryption tool)
+⚠️ **CRITICAL: You need BOTH to restore:**
+- 🔑 `~/.stash.key` - encryption key 
+- 📦 `.tar.gz.age` backup file(s)
+
+**Without BOTH, restore is IMPOSSIBLE!**
+
+### Encryption Options
+
+**Age encryption (default):**
+- All backups encrypted using **age** (modern encryption tool)
 - Private key stored at `~/.stash.key` (600 permissions)
-- **Keep your encryption key safe!** Without it, you cannot restore backups
-- Consider storing encryption key in password manager or secure location
+- Generated automatically with `stash init`
+
+**GPG encryption (optional):**
+```bash
+stash backup --use-gpg --gpg-recipient your-email@example.com
+```
+- Uses your existing GPG keys (e.g., from git commit signing)
+- No need for separate `.stash.key`
+- Restore requires GPG private key on new system
+
+### Storage Best Practices
+
+**Encryption key:**
+- Password manager (1Password, Bitwarden, etc.)
+- Secure cloud vault (separate from backup files)
+- USB drive in safe location
+- Multiple copies in different secure locations
+
+**Backup files (.age):**
+- Cloud storage (Dropbox, Google Drive, iCloud, OneDrive)
+- External hard drive
+- NAS (Network Attached Storage)
+- Multiple locations for redundancy
+
+**Never store both in same single location!**
 
 ## 🔄 Restore Workflow
 

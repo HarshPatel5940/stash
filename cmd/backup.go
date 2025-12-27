@@ -20,6 +20,8 @@ var (
 	backupOutput     string
 	backupEncryptKey string
 	backupNoEncrypt  bool
+	backupDryRun     bool
+	backupVerbose    bool
 )
 
 var backupCmd = &cobra.Command{
@@ -43,10 +45,16 @@ func init() {
 	backupCmd.Flags().StringVarP(&backupOutput, "output", "o", "", "Output directory for backups (default: ~/stash-backups)")
 	backupCmd.Flags().StringVarP(&backupEncryptKey, "encrypt-key", "k", "", "Path to encryption key (default: ~/.stash.key)")
 	backupCmd.Flags().BoolVar(&backupNoEncrypt, "no-encrypt", false, "Skip encryption (not recommended)")
+	backupCmd.Flags().BoolVar(&backupDryRun, "dry-run", false, "Preview what would be backed up without creating backup")
+	backupCmd.Flags().BoolVarP(&backupVerbose, "verbose", "v", false, "Show detailed output for debugging")
 }
 
 func runBackup(cmd *cobra.Command, args []string) error {
-	fmt.Println("🚀 Starting backup process...")
+	if backupDryRun {
+		fmt.Println("🔍 DRY RUN MODE - No files will be backed up")
+	} else {
+		fmt.Println("🚀 Starting backup process...")
+	}
 	fmt.Println()
 
 	// Load config
@@ -79,13 +87,18 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	backupName := fmt.Sprintf("backup-%s", timestamp)
 	tempDir := filepath.Join(os.TempDir(), backupName)
 
-	// Ensure temp directory is clean
-	os.RemoveAll(tempDir)
+	// In dry-run mode, skip actual directory creation
+	if !backupDryRun {
+		// Ensure temp directory is clean
+		os.RemoveAll(tempDir)
 
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
+		if err := os.MkdirAll(tempDir, 0755); err != nil {
+			return fmt.Errorf("failed to create temp directory: %w", err)
+		}
+		defer os.RemoveAll(tempDir) // Cleanup temp dir
+	} else if backupVerbose {
+		fmt.Printf("📁 Would create temp directory: %s\n", tempDir)
 	}
-	defer os.RemoveAll(tempDir) // Cleanup temp dir
 
 	// Initialize metadata
 	meta := metadata.New()
@@ -102,9 +115,11 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		"packages",
 	}
 
-	for _, dir := range dirs {
-		if err := os.MkdirAll(filepath.Join(tempDir, dir), 0755); err != nil {
-			return fmt.Errorf("failed to create subdirectory %s: %w", dir, err)
+	if !backupDryRun {
+		for _, dir := range dirs {
+			if err := os.MkdirAll(filepath.Join(tempDir, dir), 0755); err != nil {
+				return fmt.Errorf("failed to create subdirectory %s: %w", dir, err)
+			}
 		}
 	}
 
@@ -146,7 +161,17 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		fmt.Printf("⚠️  Warning: failed to create README: %v\n", err)
 	}
 
-	// Save metadata
+	// Save metadata (or preview in dry-run)
+	if backupDryRun {
+		fmt.Println("\n" + strings.Repeat("=", 50))
+		fmt.Println("🔍 DRY RUN SUMMARY - No backup created")
+		fmt.Println(strings.Repeat("=", 50))
+		fmt.Println("\n" + meta.Summary())
+		fmt.Printf("\n📁 Would create backup at: %s/%s.tar.gz.age\n", cfg.BackupDir, backupName)
+		fmt.Println("\n💡 Run without --dry-run to create actual backup")
+		return nil
+	}
+
 	metadataPath := filepath.Join(tempDir, "metadata.json")
 	if err := meta.Save(metadataPath); err != nil {
 		return fmt.Errorf("failed to save metadata: %w", err)
@@ -160,6 +185,9 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	// Archive the backup
 	fmt.Println("\n📦 Creating archive...")
 	archivePath := filepath.Join(cfg.BackupDir, backupName+".tar.gz")
+	if backupVerbose {
+		fmt.Printf("  📝 Archive path: %s\n", archivePath)
+	}
 	if err := arch.Create(tempDir, archivePath); err != nil {
 		return fmt.Errorf("failed to create archive: %w", err)
 	}
@@ -173,6 +201,11 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		fmt.Println("🔐 Encrypting backup...")
 		encryptor := crypto.NewEncryptor(cfg.EncryptionKey)
 		encryptedPath := archivePath + ".age"
+
+		if backupVerbose {
+			fmt.Printf("  🔑 Using key: %s\n", cfg.EncryptionKey)
+			fmt.Printf("  📝 Encrypted output: %s\n", encryptedPath)
+		}
 
 		if err := encryptor.Encrypt(archivePath, encryptedPath); err != nil {
 			return fmt.Errorf("failed to encrypt backup: %w", err)
@@ -195,7 +228,14 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("\n" + meta.Summary())
-	fmt.Println("\n💡 To restore this backup on a new Mac:")
+
+	fmt.Println("\n⚠️  IMPORTANT: Keep both files safe!")
+	fmt.Printf("   🔑 Encryption key: %s\n", cfg.EncryptionKey)
+	fmt.Printf("   📦 Backup file: %s\n", finalPath)
+	fmt.Println("\n💡 Store them separately (backup → cloud/drive, key → password manager)")
+	fmt.Println("💡 Without BOTH, restore is impossible!")
+
+	fmt.Println("\n📖 To restore this backup on a new Mac:")
 	fmt.Printf("   stash restore %s\n", filepath.Base(finalPath))
 
 	return nil
@@ -217,9 +257,15 @@ func backupDotfiles(tempDir string, meta *metadata.Metadata, arch *archiver.Arch
 		fileName := filepath.Base(file)
 		destPath := filepath.Join(tempDir, "dotfiles", fileName)
 
-		if err := arch.CopyFile(file, destPath); err != nil {
-			fmt.Printf("  ⚠️  Failed to copy %s: %v\n", file, err)
-			continue
+		if backupVerbose {
+			fmt.Printf("  📄 %s\n", file)
+		}
+
+		if !backupDryRun {
+			if err := arch.CopyFile(file, destPath); err != nil {
+				fmt.Printf("  ⚠️  Failed to copy %s: %v\n", file, err)
+				continue
+			}
 		}
 
 		if err := meta.AddFile(file, filepath.Join("dotfiles", fileName)); err != nil {
@@ -231,10 +277,18 @@ func backupDotfiles(tempDir string, meta *metadata.Metadata, arch *archiver.Arch
 	// Backup .config directory (with smart exclusions)
 	if configDir, found := dotfilesFinder.FindConfigDir(); found {
 		destPath := filepath.Join(tempDir, "config")
-		fmt.Printf("  📂 Backing up .config (excluding node_modules, cache, etc.)...\n")
-		if err := arch.CopyDir(configDir, destPath); err != nil {
-			fmt.Printf("  ⚠️  Warning: Some .config files skipped: %v\n", err)
+		if backupVerbose {
+			fmt.Printf("  📂 %s (excluding node_modules, cache, etc.)\n", configDir)
+		} else {
+			fmt.Printf("  📂 Backing up .config (excluding node_modules, cache, etc.)...\n")
 		}
+
+		if !backupDryRun {
+			if err := arch.CopyDir(configDir, destPath); err != nil {
+				fmt.Printf("  ⚠️  Warning: Some .config files skipped: %v\n", err)
+			}
+		}
+
 		// Always add metadata even if some files were skipped
 		if err := meta.AddFile(configDir, "config"); err != nil {
 			fmt.Printf("  ⚠️  Failed to add metadata for .config: %v\n", err)
@@ -257,9 +311,16 @@ func backupSecrets(tempDir string, meta *metadata.Metadata, arch *archiver.Archi
 
 	for name, path := range secretDirs {
 		destPath := filepath.Join(tempDir, name)
-		if err := arch.CopyDir(path, destPath); err != nil {
-			fmt.Printf("  ⚠️  Failed to copy %s directory: %v\n", name, err)
-			continue
+
+		if backupVerbose {
+			fmt.Printf("  🔐 %s → %s\n", path, name)
+		}
+
+		if !backupDryRun {
+			if err := arch.CopyDir(path, destPath); err != nil {
+				fmt.Printf("  ⚠️  Failed to copy %s directory: %v\n", name, err)
+				continue
+			}
 		}
 
 		if err := meta.AddFile(path, name); err != nil {
@@ -287,9 +348,16 @@ func backupEnvFiles(tempDir string, meta *metadata.Metadata, arch *archiver.Arch
 		safeName := strings.ReplaceAll(relPath, "/", "-")
 
 		destPath := filepath.Join(tempDir, "env-files", safeName)
-		if err := arch.CopyFile(file, destPath); err != nil {
-			fmt.Printf("  ⚠️  Failed to copy %s: %v\n", file, err)
-			continue
+
+		if backupVerbose {
+			fmt.Printf("  🔑 %s\n", file)
+		}
+
+		if !backupDryRun {
+			if err := arch.CopyFile(file, destPath); err != nil {
+				fmt.Printf("  ⚠️  Failed to copy %s: %v\n", file, err)
+				continue
+			}
 		}
 
 		if err := meta.AddFile(file, filepath.Join("env-files", safeName)); err != nil {
@@ -317,9 +385,16 @@ func backupPemFiles(tempDir string, meta *metadata.Metadata, arch *archiver.Arch
 		safeName := strings.ReplaceAll(relPath, "/", "-")
 
 		destPath := filepath.Join(tempDir, "pem-files", safeName)
-		if err := arch.CopyFile(file, destPath); err != nil {
-			fmt.Printf("  ⚠️  Failed to copy %s: %v\n", file, err)
-			continue
+
+		if backupVerbose {
+			fmt.Printf("  🔒 %s\n", file)
+		}
+
+		if !backupDryRun {
+			if err := arch.CopyFile(file, destPath); err != nil {
+				fmt.Printf("  ⚠️  Failed to copy %s: %v\n", file, err)
+				continue
+			}
 		}
 
 		if err := meta.AddFile(file, filepath.Join("pem-files", safeName)); err != nil {
@@ -336,16 +411,33 @@ func backupPackages(tempDir string, meta *metadata.Metadata) error {
 	packagesDir := filepath.Join(tempDir, "packages")
 	pkg := packager.NewPackager(packagesDir)
 
-	counts, err := pkg.CollectAll()
-	if err != nil {
-		return err
+	var counts map[string]int
+	var err error
+
+	if backupDryRun {
+		// In dry-run, just show what would be collected
+		counts = make(map[string]int)
+		counts["Homebrew"] = 0
+		counts["MAS"] = 0
+		counts["VSCode"] = 0
+		counts["NPM"] = 0
+		fmt.Println("  ℹ️  Would collect package lists (skipped in dry-run)")
+	} else {
+		counts, err = pkg.CollectAll()
+		if err != nil {
+			return err
+		}
 	}
 
 	total := 0
 	for name, count := range counts {
 		meta.SetPackageCount(name, count)
 		total += count
-		fmt.Printf("  ✓ %s: %d packages\n", name, count)
+		if !backupDryRun && backupVerbose {
+			fmt.Printf("  📦 %s: %d packages\n", name, count)
+		} else if !backupDryRun {
+			fmt.Printf("  ✓ %s: %d packages\n", name, count)
+		}
 	}
 
 	if total == 0 {

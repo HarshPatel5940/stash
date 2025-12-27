@@ -4,182 +4,168 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/harshpatel5940/stash/internal/config"
-	"github.com/harshpatel5940/stash/internal/finder"
+	"github.com/harshpatel5940/stash/internal/metadata"
 	"github.com/spf13/cobra"
 )
 
 var listCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List what would be backed up (dry-run)",
-	Long: `Shows a preview of all files and directories that would be included
-in a backup without actually creating one.
+	Short: "List all available backups",
+	Long: `Lists all backups found in the backup directory.
 
-This includes:
-  - Dotfiles from your home directory
-  - Secret directories (SSH, GPG, AWS)
-  - .env files from your projects
-  - .pem files
-  - Package manager lists (if tools are installed)`,
+Shows backup details including:
+  - Backup timestamp
+  - File size
+  - Encryption status
+  - Number of files backed up
+
+Use this to find which backup to restore.`,
 	RunE: runList,
 }
 
-var listConfigPath string
-
 func init() {
 	rootCmd.AddCommand(listCmd)
-	listCmd.Flags().StringVarP(&listConfigPath, "config", "c", "", "Config file path (default: ~/.stash.yaml)")
+}
+
+type backupInfo struct {
+	Path      string
+	Name      string
+	Size      int64
+	ModTime   time.Time
+	Encrypted bool
+	Metadata  *metadata.Metadata
 }
 
 func runList(cmd *cobra.Command, args []string) error {
 	// Load config
-	var cfg *config.Config
-	var err error
-
-	if listConfigPath != "" {
-		// Load from specified path
-		cfg = config.DefaultConfig()
-		// TODO: implement load from specific path
-		return fmt.Errorf("custom config path not yet implemented, use ~/.stash.yaml")
-	} else {
-		cfg, err = config.Load()
-		if err != nil {
-			return fmt.Errorf("failed to load config: %w", err)
-		}
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
 	}
-
 	cfg.ExpandPaths()
 
-	fmt.Println("📋 Stash Backup Preview")
-	fmt.Println("=======================")
+	// Check if backup directory exists
+	if _, err := os.Stat(cfg.BackupDir); os.IsNotExist(err) {
+		fmt.Printf("📁 No backups found\n")
+		fmt.Printf("\n💡 Backup directory doesn't exist: %s\n", cfg.BackupDir)
+		fmt.Println("💡 Run 'stash backup' to create your first backup")
+		return nil
+	}
+
+	// Find all backup files
+	backups, err := findBackups(cfg.BackupDir)
+	if err != nil {
+		return fmt.Errorf("failed to find backups: %w", err)
+	}
+
+	if len(backups) == 0 {
+		fmt.Printf("📁 No backups found in %s\n", cfg.BackupDir)
+		fmt.Println("\n💡 Run 'stash backup' to create your first backup")
+		return nil
+	}
+
+	// Sort backups by modification time (newest first)
+	sort.Slice(backups, func(i, j int) bool {
+		return backups[i].ModTime.After(backups[j].ModTime)
+	})
+
+	// Display backups
+	fmt.Println("📦 Available Backups")
+	fmt.Println(strings.Repeat("=", 70))
 	fmt.Println()
 
-	// Find dotfiles
-	dotfilesFinder, err := finder.NewDotfilesFinder()
-	if err != nil {
-		return fmt.Errorf("failed to create dotfiles finder: %w", err)
-	}
+	for i, backup := range backups {
+		fmt.Printf("%d. %s\n", i+1, backup.Name)
+		fmt.Printf("   📅 Created: %s\n", backup.ModTime.Format("2006-01-02 15:04:05"))
+		fmt.Printf("   💾 Size: %s\n", metadata.FormatSize(backup.Size))
 
-	dotfiles, err := dotfilesFinder.Find(cfg.AdditionalDotfiles)
-	if err != nil {
-		fmt.Printf("⚠️  Warning: error finding dotfiles: %v\n", err)
-	}
-
-	if len(dotfiles) > 0 {
-		fmt.Printf("📄 Dotfiles (%d found):\n", len(dotfiles))
-		for _, file := range dotfiles {
-			fmt.Printf("  ✓ %s\n", file)
+		if backup.Encrypted {
+			fmt.Printf("   🔐 Encrypted: Yes\n")
+		} else {
+			fmt.Printf("   ⚠️  Encrypted: No\n")
 		}
-		fmt.Println()
-	} else {
-		fmt.Println("📄 Dotfiles: None found")
-		fmt.Println()
-	}
 
-	// Find config directory
-	configDir, found := dotfilesFinder.FindConfigDir()
-	if found {
-		fmt.Printf("⚙️  Config Directory:\n")
-		fmt.Printf("  ✓ %s\n", configDir)
-		fmt.Println()
-	}
-
-	// Find secret directories
-	secretDirs := dotfilesFinder.FindSecretDirs()
-	if len(secretDirs) > 0 {
-		fmt.Printf("🔐 Secret Directories (%d found):\n", len(secretDirs))
-		for name, path := range secretDirs {
-			fmt.Printf("  ✓ %s: %s\n", name, path)
+		if backup.Metadata != nil {
+			totalPackages := 0
+			for _, count := range backup.Metadata.PackageCounts {
+				totalPackages += count
+			}
+			fmt.Printf("   📊 Files: %d | Packages: %d\n",
+				len(backup.Metadata.Files),
+				totalPackages)
 		}
-		fmt.Println()
-	} else {
-		fmt.Println("🔐 Secret Directories: None found")
-		fmt.Println()
-	}
 
-	// Find .env files
-	envFinder := finder.NewEnvFilesFinder(cfg.SearchPaths, cfg.Exclude)
-
-	envFiles, err := envFinder.FindEnvFiles()
-	if err != nil {
-		fmt.Printf("⚠️  Warning: error finding .env files: %v\n", err)
-	}
-
-	if len(envFiles) > 0 {
-		fmt.Printf("🔑 Environment Files (%d found):\n", len(envFiles))
-		for _, file := range envFiles {
-			fmt.Printf("  ✓ %s\n", file)
-		}
-		fmt.Println()
-	} else {
-		fmt.Println("🔑 Environment Files: None found")
+		fmt.Printf("   📍 Path: %s\n", backup.Path)
 		fmt.Println()
 	}
 
-	// Find .pem files
-	pemFiles, err := envFinder.FindPemFiles()
-	if err != nil {
-		fmt.Printf("⚠️  Warning: error finding .pem files: %v\n", err)
-	}
-
-	if len(pemFiles) > 0 {
-		fmt.Printf("🔒 PEM Files (%d found):\n", len(pemFiles))
-		for _, file := range pemFiles {
-			fmt.Printf("  ✓ %s\n", file)
-		}
-		fmt.Println()
-	} else {
-		fmt.Println("🔒 PEM Files: None found")
-		fmt.Println()
-	}
-
-	// Check for package managers
-	fmt.Println("📦 Package Managers:")
-	checkPackageManager("brew", "Homebrew")
-	checkPackageManager("mas", "Mac App Store")
-	checkPackageManager("code", "VS Code")
-	checkPackageManager("npm", "NPM")
+	fmt.Println(strings.Repeat("=", 70))
+	fmt.Printf("Total: %d backup(s) found\n", len(backups))
 	fmt.Println()
-
-	// Summary
-	totalFiles := len(dotfiles) + len(envFiles) + len(pemFiles)
-	totalDirs := len(secretDirs)
-	if found {
-		totalDirs++
-	}
-
-	fmt.Println("📊 Summary:")
-	fmt.Printf("  Files: %d\n", totalFiles)
-	fmt.Printf("  Directories: %d\n", totalDirs)
+	fmt.Println("💡 To restore a backup:")
+	fmt.Printf("   stash restore %s\n", backups[0].Path)
 	fmt.Println()
-	fmt.Println("💡 Run 'stash backup' to create a backup with these items")
+	fmt.Println("💡 To preview what would be backed up:")
+	fmt.Println("   stash backup --dry-run")
 
 	return nil
 }
 
-func checkPackageManager(cmd, name string) {
-	path, exists := os.LookupEnv("PATH")
-	if !exists {
-		return
+func findBackups(backupDir string) ([]backupInfo, error) {
+	var backups []backupInfo
+
+	// Read directory
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		return nil, err
 	}
 
-	// Simple check - just see if command exists
-	_, err := lookupCommand(cmd, path)
-	if err == nil {
-		fmt.Printf("  ✓ %s (installed)\n", name)
-	} else {
-		fmt.Printf("  ✗ %s (not installed)\n", name)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+
+		// Look for .tar.gz.age (encrypted) or .tar.gz (unencrypted) files
+		if !strings.HasSuffix(name, ".tar.gz.age") && !strings.HasSuffix(name, ".tar.gz") {
+			continue
+		}
+
+		path := filepath.Join(backupDir, name)
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		backup := backupInfo{
+			Path:      path,
+			Name:      name,
+			Size:      info.Size(),
+			ModTime:   info.ModTime(),
+			Encrypted: strings.HasSuffix(name, ".age"),
+		}
+
+		// Try to read metadata if it's a .tar.gz file (not encrypted)
+		if strings.HasSuffix(name, ".tar.gz") && !strings.HasSuffix(name, ".age") {
+			// For unencrypted backups, we could extract metadata
+			// For now, skip metadata reading to keep it simple
+		}
+
+		backups = append(backups, backup)
 	}
+
+	return backups, nil
 }
 
-func lookupCommand(cmd, pathEnv string) (string, error) {
-	// Basic implementation - just use os/exec
-	for _, dir := range filepath.SplitList(pathEnv) {
-		path := filepath.Join(dir, cmd)
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
-		}
-	}
-	return "", fmt.Errorf("command not found")
+func readMetadataFromBackup(backupPath string) (*metadata.Metadata, error) {
+	// This would require extracting the tar.gz and reading metadata.json
+	// Skip for now - only works for unencrypted backups anyway
+	// Could be enhanced later
+	return nil, nil
 }

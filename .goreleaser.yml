@@ -1,0 +1,105 @@
+# GoReleaser configuration for Stash
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: stash
+    binary: stash
+    main: ./main.go
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.BuildTime={{.Date}}
+
+archives:
+  - id: stash
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - QUICKSTART.md
+      - CONTRIBUTING.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: harshpatel5940
+    name: stash
+  draft: false
+  prerelease: auto
+  name_template: "{{.ProjectName}} v{{.Version}}"
+  header: |
+    ## 📦 Stash v{{.Version}}
+
+    **Stash your Mac, restore anywhere.**
+
+    A simple Go CLI tool for backing up dotfiles, secrets, configs, and package lists on macOS.
+
+    ### 🚀 Installation
+
+    **Using Go:**
+    ```bash
+    go install github.com/harshpatel5940/stash@{{.Tag}}
+    ```
+
+    **From Binary:**
+    Download the appropriate binary for your system below:
+    - `stash_{{.Version}}_darwin_amd64.tar.gz` - Intel Mac
+    - `stash_{{.Version}}_darwin_arm64.tar.gz` - Apple Silicon (M1/M2/M3)
+
+    ### 📖 Quick Start
+
+    ```bash
+    # Initialize
+    stash init
+
+    # Preview backup
+    stash list
+
+    # Create backup
+    stash backup
+
+    # Restore
+    stash restore backup-*.tar.gz.age
+    ```
+
+    ### 📋 What's Included
+
+    - Dotfiles backup (.zshrc, .gitconfig, etc.)
+    - Secret directories (SSH, GPG, AWS)
+    - Smart .config backup (excludes node_modules, cache)
+    - .env and .pem files from projects
+    - Package lists (Homebrew, npm, VS Code)
+    - Age encryption for security
+
+  footer: |
+    ---
+
+    **Full Changelog**: https://github.com/harshpatel5940/stash/compare/{{.PreviousTag}}...{{.Tag}}
+
+    **Documentation**: https://github.com/harshpatel5940/stash#readme
+
+    💡 Need help? [Open an issue](https://github.com/harshpatel5940/stash/issues)
