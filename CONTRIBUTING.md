@@ -1,10 +1,69 @@
 # Contributing to Stash
 
-Thanks for your interest in contributing! This guide covers development setup, architecture, and guidelines.
+Thanks for your interest in contributing! This guide covers installation, development setup, architecture, and guidelines.
 
 ---
 
-## 🚀 Quick Start
+## 📥 Installation Methods
+
+### Using Go (Recommended for Development)
+
+```bash
+go install github.com/harshpatel5940/stash@latest
+```
+
+Ensure `$GOPATH/bin` is in your `PATH`:
+```bash
+export PATH=$PATH:$(go env GOPATH)/bin
+```
+
+### Using Homebrew
+
+```bash
+# Add tap (once available)
+brew tap harshpatel5940/stash
+
+# Install
+brew install stash
+
+# Update
+brew upgrade stash
+```
+
+**Setting up Homebrew Tap:**
+
+See the [Release Process](#-release-process) section for details on how releases automatically update the Homebrew formula.
+
+### From Binary (Release)
+
+Download from [GitHub Releases](https://github.com/harshpatel5940/stash/releases):
+
+- `stash_VERSION_darwin_amd64.tar.gz` - Intel Macs
+- `stash_VERSION_darwin_arm64.tar.gz` - Apple Silicon (M1/M2/M3+)
+
+```bash
+# Extract
+tar -xzf stash_*.tar.gz
+
+# Move to PATH
+sudo mv stash /usr/local/bin/
+
+# Verify
+stash --version
+```
+
+### From Source
+
+```bash
+git clone https://github.com/harshpatel5940/stash.git
+cd stash
+make build
+sudo make install
+```
+
+---
+
+## 🚀 Development Quick Start
 
 ```bash
 # Clone
@@ -293,7 +352,11 @@ Builds for:
 - `darwin/amd64` (Intel Macs)
 - `darwin/arm64` (Apple Silicon)
 
-Archives include binary + README.
+Archives include:
+- Binary
+- README.md
+- LICENSE
+- CONTRIBUTING.md
 
 ---
 

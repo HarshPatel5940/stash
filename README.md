@@ -1,104 +1,88 @@
 # 📦 Stash
 
-[![Test and Build](https://github.com/harshpatel5940/stash/actions/workflows/test.yml/badge.svg)](https://github.com/harshpatel5940/stash/actions/workflows/test.yml)
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
+[![Test](https://github.com/harshpatel5940/stash/actions/workflows/test.yml/badge.svg)](https://github.com/harshpatel5940/stash/actions/workflows/test.yml)
+[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Backup your Mac. Restore anywhere.**
-
-Encrypted backup CLI for macOS dotfiles, secrets, configs, and package lists.
-
-## ⚠️ CRITICAL: Backup Safety
-
-**You need BOTH to restore:**
-- 🔑 `~/.stash.key` (encryption key)
-- 📦 `.tar.gz.age` (backup file)
-
-**Storage:**
-- Key → Password manager, USB drive, secure vault
-- Backup → Cloud storage, external drive, NAS
-
-**Store separately. Without both, restore is impossible.**
+Encrypted backup for macOS dotfiles, secrets, and configs.
 
 ---
 
-## 🚀 Quick Start
+## ⚠️ Critical
 
-### Install
+**Need BOTH to restore:**
+- 🔑 `~/.stash.key` → Password manager
+- 📦 `.tar.gz.age` → Cloud/external drive
+
+**Store separately. Lose either = lose everything.**
+
+---
+
+## Install
 
 ```bash
 go install github.com/harshpatel5940/stash@latest
 ```
 
-### Usage
+---
+
+## Usage
 
 ```bash
-# 1. Initialize (creates key + config)
+# Setup
 stash init
 
-# 2. Preview what gets backed up
-stash backup --dry-run
-
-# 3. Create backup
+# Backup
 stash backup
 
-# 4. List backups
+# List backups
 stash list
 
-# 5. Restore (on new Mac)
-stash restore backup-2024-12-27-153045.tar.gz.age --interactive
+# Restore (copy .stash.key first!)
+stash restore backup.tar.gz.age --interactive
 ```
 
 ---
 
-## 📚 Commands
+## What Gets Backed Up
 
-### `stash init`
-Generate encryption key and config.
+- Dotfiles (`.zshrc`, `.gitconfig`, `.vimrc`, etc.)
+- Secrets (`~/.ssh`, `~/.gnupg`, `~/.aws`)
+- Configs (`~/.config` - smart exclusions)
+- `.env` and `.pem` files
+- Package lists (Homebrew, npm, VS Code, MAS)
 
-### `stash backup`
-Create encrypted backup.
+---
 
-**Flags:**
-- `--dry-run` - Preview without creating backup
-- `--verbose` - Detailed output for debugging
-- `--no-encrypt` - Skip encryption (not recommended)
-- `-o` - Output directory (default: `~/stash-backups`)
+## Flags
 
-### `stash list`
-Show all available backups with details.
+**Backup:**
+- `--dry-run` - Preview
+- `--verbose` - Debug output
+- `--no-encrypt` - Skip encryption
 
-### `stash restore <file>`
-Restore from backup.
+**Restore:**
+- `--dry-run` - Preview
+- `--interactive` - Pick/drop files (git-rebase style)
+- `--no-decrypt` - Unencrypted backup
 
-**Flags:**
-- `--dry-run` - Preview without restoring
-- `--interactive` - Pick/drop files in editor (git-rebase style)
-- `--no-decrypt` - Backup not encrypted
+---
 
-**Interactive mode:**
-Opens editor with pick/drop list. Change `pick` → `drop` to skip files.
+## Interactive Restore
+
+Opens editor with pick/drop list:
 
 ```
 pick [FILE] ~/.bashrc (2.3 KB)
-drop [FILE] ~/.ssh/id_rsa (3.2 KB)  # Changed to drop
-pick [DIR ] ~/.config (0 B)
+drop [FILE] ~/.ssh/id_rsa (skip this)
+pick [DIR ] ~/.config
 ```
 
----
-
-## 📦 What Gets Backed Up
-
-- **Dotfiles**: `.zshrc`, `.bashrc`, `.gitconfig`, `.vimrc`, etc.
-- **Secrets**: `~/.ssh`, `~/.gnupg`, `~/.aws`
-- **Configs**: `~/.config` (smart exclusions: no `node_modules`, cache, logs)
-- **Environment**: `.env` files from projects
-- **Certificates**: `.pem` files
-- **Packages**: Homebrew, MAS, VS Code, npm lists
+Change `pick` → `drop` to skip files. Save & close.
 
 ---
 
-## ⚙️ Configuration
+## Config
 
 Edit `~/.stash.yaml`:
 
@@ -121,15 +105,7 @@ encryption_key: ~/.stash.key
 
 ---
 
-## 🔐 Security
-
-- **Encryption**: age (modern, simple, secure)
-- **Key permissions**: 600 (owner read/write only)
-- **No plaintext**: All backups encrypted by default
-
----
-
-## 🔄 After Restore
+## After Restore
 
 ```bash
 # Install Homebrew
@@ -145,26 +121,21 @@ cat packages/vscode-extensions.txt | xargs -L 1 code --install-extension
 
 ---
 
-## 🧪 Testing
+## Development
 
-48 tests covering crypto, archiver, metadata, finder, config.
+See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ```bash
+make build
 make test
 ```
 
 ---
 
-## 🤝 Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, architecture, and guidelines.
-
----
-
-## 📝 License
+## License
 
 MIT - see [LICENSE](LICENSE)
 
 ---
 
-**Made with ❤️ by [Harsh Patel](https://github.com/harshpatel5940)**
+**[GitHub](https://github.com/harshpatel5940/stash)** • **[Issues](https://github.com/harshpatel5940/stash/issues)**
