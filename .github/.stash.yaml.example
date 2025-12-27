@@ -1,0 +1,37 @@
+# Stash Configuration File
+# Copy this to ~/.stash.yaml and customize as needed
+
+# Directories to search for .env and .pem files
+# These paths will be recursively scanned during backup
+search_paths:
+  - ~/projects
+  - ~/work
+  - ~/Documents
+
+# Exclude patterns (glob-style matching)
+# Files/directories matching these patterns will be skipped
+exclude:
+  - "*/node_modules/*"
+  - "*/vendor/*"
+  - "*/.git/*"
+  - "*/.next/*"
+  - "*/dist/*"
+  - "*/build/*"
+  - "*/.venv/*"
+  - "*/__pycache__/*"
+  - "*/target/*"
+
+# Additional dotfiles to backup (beyond auto-detected ones)
+# These will be searched in your home directory
+additional_dotfiles:
+  - .custom_aliases
+  - .local_config
+  - .secrets
+
+# Backup output directory
+# All encrypted backups will be saved here
+backup_dir: ~/stash-backups
+
+# Encryption key location
+# Keep this key safe! You'll need it to restore backups
+encryption_key: ~/.stash.key
