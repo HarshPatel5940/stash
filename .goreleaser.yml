@@ -33,6 +33,22 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+brews:
+  - name: stash
+    repository:
+      owner: harshpatel5940
+      name: homebrew-tap
+    homepage: "https://github.com/harshpatel5940/stash"
+    description: "Encrypted backup for macOS dotfiles, secrets, and configs"
+    license: "MIT"
+    install: |
+      bin.install "stash"
+      doc.install "README.md" if File.exist?("README.md")
+      doc.install "LICENSE" if File.exist?("LICENSE")
+      doc.install "CONTRIBUTING.md" if File.exist?("CONTRIBUTING.md")
+    test: |
+      assert_match "stash", shell_output("#{bin}/stash --help")
+
 changelog:
   sort: asc
   filters:
