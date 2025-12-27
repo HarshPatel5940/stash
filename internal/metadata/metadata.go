@@ -35,7 +35,7 @@ func New() *Metadata {
 	username := os.Getenv("USER")
 
 	return &Metadata{
-		Version:       "1.0.0",
+		Version:       "1.0.1",
 		Timestamp:     time.Now(),
 		Hostname:      hostname,
 		Username:      username,

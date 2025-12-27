@@ -28,7 +28,6 @@ archives:
     files:
       - README.md
       - LICENSE
-      - QUICKSTART.md
       - CONTRIBUTING.md
 
 checksum:
