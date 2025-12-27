@@ -20,6 +20,12 @@ Encrypted backup for macOS dotfiles, secrets, and configs.
 
 ## Install
 
+**Homebrew:**
+```bash
+brew install harshpatel5940/tap/stash
+```
+
+**Go:**
 ```bash
 go install github.com/harshpatel5940/stash@latest
 ```

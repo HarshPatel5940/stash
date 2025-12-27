@@ -46,6 +46,9 @@ brews:
       doc.install "README.md" if File.exist?("README.md")
       doc.install "LICENSE" if File.exist?("LICENSE")
       doc.install "CONTRIBUTING.md" if File.exist?("CONTRIBUTING.md")
+
+      generate_completions_from_executable(bin/"stash", "completion",
+                                           shells: [:bash, :zsh, :fish])
     test: |
       assert_match "stash", shell_output("#{bin}/stash --help")
 

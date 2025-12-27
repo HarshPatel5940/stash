@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var Version = "1.0.2"
+
 var rootCmd = &cobra.Command{
 	Use:   "stash",
 	Short: "A Mac backup CLI tool",
@@ -21,7 +23,7 @@ It backs up:
   - Package lists (Homebrew, MAS, VS Code, npm)
 
 All backups are encrypted using age for security.`,
-	Version: "1.0.1",
+	Version: Version,
 }
 
 func Execute() {
@@ -32,5 +34,6 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.CompletionOptions.DisableDefaultCmd = true
+	// Keep completion command enabled for Homebrew to generate completions
+	rootCmd.CompletionOptions.DisableDefaultCmd = false
 }
