@@ -217,16 +217,16 @@ Follow existing patterns:
 
 ```go
 func TestFeature(t *testing.T) {
-    tempDir := t.TempDir() // Auto-cleanup
+    tempDir := t.TempDir() 
     
-    // Setup
+    
     testFile := filepath.Join(tempDir, "test.txt")
     os.WriteFile(testFile, []byte("content"), 0644)
     
-    // Execute
+    
     result, err := YourFunction(testFile)
     
-    // Assert
+    
     if err != nil {
         t.Fatalf("Expected no error, got: %v", err)
     }
@@ -300,10 +300,10 @@ backup-2024-12-27-153045.tar.gz.age (encrypted)
 
 ```go
 require (
-    filippo.io/age v1.2.1              // Encryption
-    github.com/spf13/cobra v1.10.2     // CLI framework
-    github.com/spf13/viper v1.21.0     // Config management
-    gopkg.in/yaml.v3 v3.0.1            // YAML parsing
+    filippo.io/age v1.2.1              
+    github.com/spf13/cobra v1.10.2     
+    github.com/spf13/viper v1.21.0     
+    gopkg.in/yaml.v3 v3.0.1            
 )
 ```
 
@@ -431,7 +431,7 @@ Parse logic:
 1. **Finder** (`internal/finder/finder.go`)
    ```go
    func (f *Finder) FindNewFiles() ([]string, error) {
-       // Discovery logic
+       
    }
    ```
 
@@ -439,15 +439,15 @@ Parse logic:
    ```go
    func backupNewFiles(tempDir string, meta *metadata.Metadata, ...) error {
        files := finder.FindNewFiles()
-       // Copy files
-       // Add to metadata
+       
+       
    }
    ```
 
 3. **Test** (`internal/finder/finder_test.go`)
    ```go
    func TestFindNewFiles(t *testing.T) {
-       // Test cases
+       
    }
    ```
 

@@ -46,7 +46,6 @@ func Load() (*Config, error) {
 
 	configPath := filepath.Join(homeDir, ".stash.yaml")
 
-	// If config doesn't exist, return default
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		return DefaultConfig(), nil
 	}

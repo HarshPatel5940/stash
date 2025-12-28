@@ -36,7 +36,6 @@ func TestAddFile(t *testing.T) {
 	testFile := filepath.Join(tempDir, "test.txt")
 	testContent := []byte("test content for checksum")
 
-	// Create test file
 	if err := os.WriteFile(testFile, testContent, 0644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -139,12 +138,10 @@ func TestSaveAndLoad(t *testing.T) {
 	tempDir := t.TempDir()
 	metaPath := filepath.Join(tempDir, "metadata.json")
 
-	// Create metadata
 	meta := New()
 	meta.SetPackageCount("Homebrew", 5)
 	meta.SetPackageCount("NPM", 3)
 
-	// Add a test file
 	testFile := filepath.Join(tempDir, "test.txt")
 	if err := os.WriteFile(testFile, []byte("content"), 0644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
@@ -153,23 +150,19 @@ func TestSaveAndLoad(t *testing.T) {
 		t.Fatalf("Failed to add file: %v", err)
 	}
 
-	// Save metadata
 	if err := meta.Save(metaPath); err != nil {
 		t.Fatalf("Failed to save metadata: %v", err)
 	}
 
-	// Verify file exists
 	if _, err := os.Stat(metaPath); os.IsNotExist(err) {
 		t.Fatal("Metadata file was not created")
 	}
 
-	// Load metadata
 	loadedMeta, err := Load(metaPath)
 	if err != nil {
 		t.Fatalf("Failed to load metadata: %v", err)
 	}
 
-	// Verify loaded data
 	if loadedMeta.Version != meta.Version {
 		t.Errorf("Version mismatch. Expected %s, got %s", meta.Version, loadedMeta.Version)
 	}
@@ -205,7 +198,6 @@ func TestLoadInvalidJSON(t *testing.T) {
 	tempDir := t.TempDir()
 	metaPath := filepath.Join(tempDir, "invalid.json")
 
-	// Write invalid JSON
 	if err := os.WriteFile(metaPath, []byte("not valid json"), 0644); err != nil {
 		t.Fatalf("Failed to create invalid JSON file: %v", err)
 	}
@@ -220,21 +212,18 @@ func TestSummary(t *testing.T) {
 	tempDir := t.TempDir()
 	meta := New()
 
-	// Add files
 	file1 := filepath.Join(tempDir, "file1.txt")
 	if err := os.WriteFile(file1, []byte("content1"), 0644); err != nil {
 		t.Fatalf("Failed to create file1: %v", err)
 	}
 	meta.AddFile(file1, "backup/file1.txt")
 
-	// Add directory
 	dir1 := filepath.Join(tempDir, "dir1")
 	if err := os.Mkdir(dir1, 0755); err != nil {
 		t.Fatalf("Failed to create dir1: %v", err)
 	}
 	meta.AddFile(dir1, "backup/dir1")
 
-	// Add package counts
 	meta.SetPackageCount("Homebrew", 10)
 	meta.SetPackageCount("VSCode", 5)
 
@@ -244,7 +233,6 @@ func TestSummary(t *testing.T) {
 		t.Error("Summary should not be empty")
 	}
 
-	// Summary should contain key information
 	if !contains(summary, meta.Hostname) {
 		t.Error("Summary should contain hostname")
 	}
@@ -289,7 +277,6 @@ func TestChecksumConsistency(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	// Calculate checksum twice
 	checksum1, err := calculateChecksum(testFile)
 	if err != nil {
 		t.Fatalf("Failed to calculate checksum: %v", err)
@@ -304,7 +291,6 @@ func TestChecksumConsistency(t *testing.T) {
 		t.Error("Checksums should be consistent for same file")
 	}
 
-	// Modify file and verify checksum changes
 	if err := os.WriteFile(testFile, []byte("modified content"), 0644); err != nil {
 		t.Fatalf("Failed to modify file: %v", err)
 	}
@@ -337,7 +323,6 @@ func TestFileInfoTimestamp(t *testing.T) {
 		t.Error("ModTime should be set")
 	}
 
-	// ModTime should be recent (within last minute)
 	if time.Since(fileInfo.ModTime) > time.Minute {
 		t.Error("ModTime should be recent")
 	}
@@ -347,7 +332,6 @@ func TestMultipleFiles(t *testing.T) {
 	tempDir := t.TempDir()
 	meta := New()
 
-	// Add multiple files
 	for i := 0; i < 5; i++ {
 		filename := filepath.Join(tempDir, "file"+string(rune('0'+i))+".txt")
 		content := []byte("content " + string(rune('0'+i)))
@@ -363,7 +347,6 @@ func TestMultipleFiles(t *testing.T) {
 		t.Errorf("Expected 5 files, got %d", len(meta.Files))
 	}
 
-	// Each file should have unique checksum
 	checksums := make(map[string]bool)
 	for _, f := range meta.Files {
 		if checksums[f.Checksum] {

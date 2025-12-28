@@ -18,13 +18,12 @@ func TestNewDotfilesFinder(t *testing.T) {
 }
 
 func TestFindDotfiles(t *testing.T) {
-	// Create temporary home directory
+
 	tempHome := t.TempDir()
 	originalHome := os.Getenv("HOME")
 	os.Setenv("HOME", tempHome)
 	defer os.Setenv("HOME", originalHome)
 
-	// Create test dotfiles
 	testDotfiles := []string{
 		".bashrc",
 		".zshrc",
@@ -39,7 +38,6 @@ func TestFindDotfiles(t *testing.T) {
 		}
 	}
 
-	// Create non-dotfile (should be ignored)
 	if err := os.WriteFile(filepath.Join(tempHome, "regular.txt"), []byte("test"), 0644); err != nil {
 		t.Fatalf("Failed to create regular file: %v", err)
 	}
@@ -54,12 +52,10 @@ func TestFindDotfiles(t *testing.T) {
 		t.Fatalf("Failed to find dotfiles: %v", err)
 	}
 
-	// Should find at least the files we created
 	if len(dotfiles) < len(testDotfiles) {
 		t.Errorf("Expected at least %d dotfiles, found %d", len(testDotfiles), len(dotfiles))
 	}
 
-	// Verify our test files are in the results
 	foundMap := make(map[string]bool)
 	for _, f := range dotfiles {
 		foundMap[filepath.Base(f)] = true
@@ -78,7 +74,6 @@ func TestFindAdditionalDotfiles(t *testing.T) {
 	os.Setenv("HOME", tempHome)
 	defer os.Setenv("HOME", originalHome)
 
-	// Create additional dotfiles
 	additional := []string{".custom_rc", ".my_config"}
 	for _, dotfile := range additional {
 		path := filepath.Join(tempHome, dotfile)
@@ -97,7 +92,6 @@ func TestFindAdditionalDotfiles(t *testing.T) {
 		t.Fatalf("Failed to find dotfiles: %v", err)
 	}
 
-	// Verify additional files are included
 	foundMap := make(map[string]bool)
 	for _, f := range dotfiles {
 		foundMap[filepath.Base(f)] = true
@@ -116,7 +110,6 @@ func TestFindConfigDir(t *testing.T) {
 	os.Setenv("HOME", tempHome)
 	defer os.Setenv("HOME", originalHome)
 
-	// Create .config directory
 	configDir := filepath.Join(tempHome, ".config")
 	if err := os.Mkdir(configDir, 0755); err != nil {
 		t.Fatalf("Failed to create .config: %v", err)
@@ -160,7 +153,6 @@ func TestFindSecretDirs(t *testing.T) {
 	os.Setenv("HOME", tempHome)
 	defer os.Setenv("HOME", originalHome)
 
-	// Create secret directories
 	secretDirs := []string{".ssh", ".gnupg", ".aws"}
 	for _, dir := range secretDirs {
 		path := filepath.Join(tempHome, dir)
@@ -197,7 +189,6 @@ func TestFindSecretDirsNotExists(t *testing.T) {
 
 	found := finder.FindSecretDirs()
 
-	// Should return empty map when no secret dirs exist
 	if len(found) != 0 {
 		t.Error("Should return empty map when no secret directories exist")
 	}
@@ -206,13 +197,11 @@ func TestFindSecretDirsNotExists(t *testing.T) {
 func TestEnvFilesFinder(t *testing.T) {
 	tempDir := t.TempDir()
 
-	// Create test directory structure
 	projectDir := filepath.Join(tempDir, "projects", "myapp")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
 		t.Fatalf("Failed to create project dir: %v", err)
 	}
 
-	// Create .env files
 	envFiles := []string{
 		filepath.Join(projectDir, ".env"),
 		filepath.Join(projectDir, ".env.local"),
@@ -245,7 +234,6 @@ func TestEnvFilesFinder(t *testing.T) {
 func TestEnvFilesFinderWithExclusions(t *testing.T) {
 	tempDir := t.TempDir()
 
-	// Create test structure with node_modules
 	projectDir := filepath.Join(tempDir, "project")
 	nodeModules := filepath.Join(projectDir, "node_modules", "package")
 
@@ -253,13 +241,11 @@ func TestEnvFilesFinderWithExclusions(t *testing.T) {
 		t.Fatalf("Failed to create dirs: %v", err)
 	}
 
-	// Create .env in root (should be found)
 	rootEnv := filepath.Join(projectDir, ".env")
 	if err := os.WriteFile(rootEnv, []byte("ROOT=1"), 0644); err != nil {
 		t.Fatalf("Failed to create root .env: %v", err)
 	}
 
-	// Create .env in node_modules (should be excluded)
 	nmEnv := filepath.Join(nodeModules, ".env")
 	if err := os.WriteFile(nmEnv, []byte("NM=1"), 0644); err != nil {
 		t.Fatalf("Failed to create node_modules .env: %v", err)
@@ -274,7 +260,6 @@ func TestEnvFilesFinderWithExclusions(t *testing.T) {
 		t.Fatalf("Failed to find env files: %v", err)
 	}
 
-	// Should only find root .env, not the one in node_modules
 	if len(found) != 1 {
 		t.Errorf("Expected 1 env file (excluding node_modules), found %d", len(found))
 	}
@@ -287,7 +272,6 @@ func TestEnvFilesFinderWithExclusions(t *testing.T) {
 func TestFindPemFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
-	// Create test .pem files
 	pemFiles := []string{
 		filepath.Join(tempDir, "cert.pem"),
 		filepath.Join(tempDir, "keys", "private.pem"),
@@ -320,13 +304,11 @@ func TestFindPemFiles(t *testing.T) {
 func TestFindPemFilesWithExclusions(t *testing.T) {
 	tempDir := t.TempDir()
 
-	// Create .pem in root
 	rootPem := filepath.Join(tempDir, "root.pem")
 	if err := os.WriteFile(rootPem, []byte("CERT"), 0644); err != nil {
 		t.Fatalf("Failed to create root pem: %v", err)
 	}
 
-	// Create .pem in excluded directory
 	vendorDir := filepath.Join(tempDir, "vendor", "lib")
 	if err := os.MkdirAll(vendorDir, 0755); err != nil {
 		t.Fatalf("Failed to create vendor dir: %v", err)
@@ -380,7 +362,6 @@ func TestNonexistentSearchPath(t *testing.T) {
 	finder := NewEnvFilesFinder(searchPaths, exclude)
 	found, err := finder.FindEnvFiles()
 
-	// Should handle gracefully (either error or empty result)
 	if err == nil && len(found) != 0 {
 		t.Error("Should return empty results for nonexistent path")
 	}
