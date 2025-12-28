@@ -40,7 +40,7 @@ func New() *Metadata {
 	username := os.Getenv("USER")
 
 	return &Metadata{
-		Version:       "1.0.1",
+		Version:       "1.1.0",
 		Timestamp:     time.Now(),
 		Hostname:      hostname,
 		Username:      username,
@@ -159,6 +159,9 @@ func (m *Metadata) Summary() string {
 
 	summary := fmt.Sprintf("Backup created: %s\n", m.Timestamp.Format("2006-01-02 15:04:05"))
 	summary += fmt.Sprintf("Hostname: %s\n", m.Hostname)
+	summary += fmt.Sprintf("Username: %s\n", m.Username)
+	summary += fmt.Sprintf("Files: %d, Directories: %d\n", fileCount, dirCount)
+	summary += fmt.Sprintf("Total size: %s\n", FormatSize(m.BackupSize))
 
 	summary += "\nSize Breakdown:\n"
 

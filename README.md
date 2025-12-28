@@ -52,20 +52,25 @@ stash restore backup.tar.gz.age --interactive
 
 ## What Gets Backed Up
 
-- Dotfiles (`.zshrc`, `.gitconfig`, `.vimrc`, etc.)
-- Secrets (`~/.ssh`, `~/.gnupg`, `~/.aws`)
-- Configs (`~/.config` - smart exclusions)
-- `.env` and `.pem` files
-- Package lists (Homebrew, npm, VS Code, MAS)
+- **Dotfiles**: Shell configs (`.zshrc`), git configs, etc.
+- **Secrets**: SSH keys, GPG keys, AWS credentials.
+- **Dev Secrets**: `.env` and `.pem` files from your projects.
+- **Configs**: `~/.config` (with smart exclusions like `node_modules`).
+- **Packages**: Homebrew, npm, VS Code extensions, Mac App Store apps.
+- **Browser Data**: Bookmarks, extensions, settings (Chrome, Firefox, Safari, Arc).
+- **Git Repos**: Tracks all your git repositories for easy re-cloning.
+- **System**: macOS defaults/preferences, custom fonts, shell history.
 
 ---
 
 ## Flags
 
 **Backup:**
-- `--dry-run` - Preview
-- `--verbose` - Debug output
-- `--no-encrypt` - Skip encryption
+- `--skip-browsers` - Skip browser data (saves space)
+- `--keep <n>` - Keep only last N backups (default: 5)
+- `--dry-run` - Preview what will be backed up
+- `--verbose` - Detailed output
+- `--no-encrypt` - Skip encryption (not recommended)
 
 **Restore:**
 - `--dry-run` - Preview
