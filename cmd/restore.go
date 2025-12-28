@@ -10,6 +10,7 @@ import (
 
 	"github.com/harshpatel5940/stash/internal/archiver"
 	"github.com/harshpatel5940/stash/internal/crypto"
+	"github.com/harshpatel5940/stash/internal/defaults"
 	"github.com/harshpatel5940/stash/internal/metadata"
 	"github.com/spf13/cobra"
 )
@@ -21,6 +22,16 @@ var (
 	restoreNoDecrypt   bool
 )
 
+type RestoreOptions struct {
+	RestoreFiles         bool
+	RestoreMacOSDefaults bool
+	InstallHomebrew      bool
+	InstallMAS           bool
+	InstallVSCode        bool
+	InstallNPM           bool
+	RestoreShellHistory  bool
+}
+
 var restoreCmd = &cobra.Command{
 	Use:   "restore <backup-file>",
 	Short: "Restore from a backup",
@@ -29,11 +40,17 @@ var restoreCmd = &cobra.Command{
 The restore process:
   1. Decrypts the backup file (if encrypted)
   2. Extracts the archive
-  3. Reads metadata to find original file paths
-  4. Restores files to their original locations
+  3. Interactive menu to select what to restore/install
+  4. Executes selected actions automatically:
+     - Restore files (dotfiles, SSH, GPG, configs)
+     - Restore macOS system preferences
+     - Install Homebrew packages
+     - Install Mac App Store apps
+     - Install VS Code extensions
+     - Install NPM global packages
 
 Use --dry-run to preview what would be restored without making changes.
-Use --interactive to pick/drop files in your editor (git-rebase style).`,
+Use --interactive to pick/drop individual files in your editor (git-rebase style).`,
 	Args: cobra.ExactArgs(1),
 	RunE: runRestore,
 }
@@ -49,9 +66,20 @@ func init() {
 func runRestore(cmd *cobra.Command, args []string) error {
 	backupFile := args[0]
 
-	// Check if backup file exists
 	if _, err := os.Stat(backupFile); os.IsNotExist(err) {
-		return fmt.Errorf("backup file not found: %s", backupFile)
+
+		if !filepath.IsAbs(backupFile) {
+			homeDir, _ := os.UserHomeDir()
+			altPath := filepath.Join(homeDir, "stash-backups", backupFile)
+			if _, err := os.Stat(altPath); err == nil {
+				backupFile = altPath
+				fmt.Printf("📂 Using backup from: %s\n", altPath)
+			} else {
+				return fmt.Errorf("backup file not found: %s (also checked %s)", args[0], altPath)
+			}
+		} else {
+			return fmt.Errorf("backup file not found: %s", backupFile)
+		}
 	}
 
 	if restoreDryRun {
@@ -62,13 +90,11 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	fmt.Println("🔄 Starting restore process...")
 	fmt.Println()
 
-	// Set up decryption key path
 	if restoreDecryptKey == "" {
 		homeDir, _ := os.UserHomeDir()
 		restoreDecryptKey = filepath.Join(homeDir, ".stash.key")
 	}
 
-	// Create temp directory for extraction
 	tempDir, err := os.MkdirTemp("", "stash-restore-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
@@ -77,7 +103,6 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 	var archivePath string
 
-	// Decrypt if needed
 	if restoreNoDecrypt {
 		archivePath = backupFile
 		fmt.Println("⚠️  Skipping decryption (--no-decrypt was used)")
@@ -99,7 +124,6 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		fmt.Println("⚠️  Backup does not appear to be encrypted (.age extension not found)")
 	}
 
-	// Extract archive
 	fmt.Println("\n📦 Extracting backup...")
 	extractDir := filepath.Join(tempDir, "extracted")
 	arch := archiver.NewArchiver()
@@ -109,7 +133,6 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("  ✓ Extraction successful")
 
-	// Load metadata
 	fmt.Println("\n📋 Reading backup metadata...")
 	metadataPath := filepath.Join(extractDir, "metadata.json")
 	meta, err := metadata.Load(metadataPath)
@@ -122,7 +145,36 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Username: %s\n", meta.Username)
 	fmt.Printf("  Files: %d\n", len(meta.Files))
 
-	// Show README if in dry-run mode
+	packagesDir := filepath.Join(extractDir, "packages")
+	macosDefaultsFile := filepath.Join(extractDir, "macos-defaults", "macos-defaults.json")
+
+	hasBrewfile := fileExists(filepath.Join(packagesDir, "Brewfile"))
+	hasMAS := fileExists(filepath.Join(packagesDir, "mas-apps.txt"))
+	hasVSCode := fileExists(filepath.Join(packagesDir, "vscode-extensions.txt"))
+	hasNPM := fileExists(filepath.Join(packagesDir, "npm-global.txt"))
+	hasMacOSDefaults := fileExists(macosDefaultsFile)
+	hasShellHistory := fileExists(filepath.Join(extractDir, "shell-history"))
+
+	var options RestoreOptions
+	if !restoreDryRun && !restoreInteractive {
+		var err error
+		options, err = promptRestoreOptions(hasBrewfile, hasMAS, hasVSCode, hasNPM, hasMacOSDefaults, hasShellHistory)
+		if err != nil {
+			return fmt.Errorf("failed to get restore options: %w", err)
+		}
+	} else {
+
+		options = RestoreOptions{
+			RestoreFiles:         true,
+			RestoreMacOSDefaults: hasMacOSDefaults,
+			InstallHomebrew:      hasBrewfile,
+			InstallMAS:           hasMAS,
+			InstallVSCode:        hasVSCode,
+			InstallNPM:           hasNPM,
+			RestoreShellHistory:  hasShellHistory,
+		}
+	}
+
 	readmePath := filepath.Join(extractDir, "README.txt")
 	if restoreDryRun {
 		if content, err := os.ReadFile(readmePath); err == nil {
@@ -133,13 +185,11 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Preview files to be restored
 	fmt.Println("\n📂 Files to be restored:")
 	fmt.Println(strings.Repeat("-", 80))
 
 	fileCount := 0
 	dirCount := 0
-	skippedCount := 0
 
 	for _, fileInfo := range meta.Files {
 		if fileInfo.IsDir {
@@ -159,7 +209,6 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Interactive mode - let user pick/drop files
 	filesToRestore := meta.Files
 	if restoreInteractive {
 		selected, err := interactivePickFiles(meta.Files, tempDir)
@@ -172,98 +221,186 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		}
 		filesToRestore = selected
 		fmt.Printf("\n✓ Selected %d files to restore\n", len(filesToRestore))
-	} else {
-		// Non-interactive - confirm restore
-		fmt.Println("\n⚠️  WARNING: This will restore files to their original locations!")
-		fmt.Println("   Existing files may be overwritten.")
-		fmt.Print("\nDo you want to continue? [y/N]: ")
+	}
 
-		reader := bufio.NewReader(os.Stdin)
-		response, err := reader.ReadString('\n')
-		if err != nil {
-			return fmt.Errorf("failed to read input: %w", err)
+	fmt.Println("\n" + strings.Repeat("=", 50))
+	fmt.Println("🚀 Executing restore actions...")
+	fmt.Println(strings.Repeat("=", 50))
+
+	successCount := 0
+	skippedCount := 0
+
+	if options.RestoreFiles {
+		fmt.Println("\n🔄 Restoring files...")
+
+		for _, fileInfo := range filesToRestore {
+			backupFilePath := filepath.Join(extractDir, fileInfo.BackupPath)
+			destPath := fileInfo.OriginalPath
+
+			if strings.HasPrefix(destPath, "~") {
+				homeDir, _ := os.UserHomeDir()
+				destPath = filepath.Join(homeDir, destPath[1:])
+			}
+
+			if fileInfo.IsDir {
+				if err := arch.CopyDir(backupFilePath, destPath); err != nil {
+					fmt.Printf("  ⚠️  Failed to restore directory %s: %v\n", fileInfo.OriginalPath, err)
+					skippedCount++
+					continue
+				}
+			} else {
+
+				if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+					fmt.Printf("  ⚠️  Failed to create parent directory for %s: %v\n", fileInfo.OriginalPath, err)
+					skippedCount++
+					continue
+				}
+
+				if err := arch.CopyFile(backupFilePath, destPath); err != nil {
+					fmt.Printf("  ⚠️  Failed to restore %s: %v\n", fileInfo.OriginalPath, err)
+					skippedCount++
+					continue
+				}
+
+				if err := os.Chmod(destPath, fileInfo.Mode); err != nil {
+					fmt.Printf("  ⚠️  Failed to restore permissions for %s: %v\n", fileInfo.OriginalPath, err)
+				}
+			}
+
+			fmt.Printf("  ✓ Restored %s\n", fileInfo.OriginalPath)
 		}
 
-		response = strings.TrimSpace(strings.ToLower(response))
-		if response != "y" && response != "yes" {
-			fmt.Println("Restore cancelled.")
-			return nil
+		successCount = len(filesToRestore) - skippedCount
+		fmt.Printf("\n✓ Successfully restored: %d files\n", successCount)
+		if skippedCount > 0 {
+			fmt.Printf("⊘ Skipped: %d items\n", skippedCount)
 		}
 	}
 
-	// Restore files
-	fmt.Println("\n🔄 Restoring files...")
+	homeDir, _ := os.UserHomeDir()
+	stashBackupsDir := filepath.Join(homeDir, "stash-backups")
+	persistentPackagesDir := filepath.Join(stashBackupsDir, "packages")
 
-	for _, fileInfo := range filesToRestore {
-		backupFilePath := filepath.Join(extractDir, fileInfo.BackupPath)
-		destPath := fileInfo.OriginalPath
+	if _, err := os.Stat(packagesDir); err == nil {
+		fmt.Println("\n📦 Copying packages to persistent location...")
 
-		// Expand home directory if needed
-		if strings.HasPrefix(destPath, "~") {
-			homeDir, _ := os.UserHomeDir()
-			destPath = filepath.Join(homeDir, destPath[1:])
-		}
-
-		// Restore based on type
-		if fileInfo.IsDir {
-			if err := arch.CopyDir(backupFilePath, destPath); err != nil {
-				fmt.Printf("  ⚠️  Failed to restore directory %s: %v\n", fileInfo.OriginalPath, err)
-				skippedCount++
-				continue
-			}
+		if err := os.MkdirAll(stashBackupsDir, 0755); err != nil {
+			fmt.Printf("  ⚠️  Failed to create %s: %v\n", stashBackupsDir, err)
 		} else {
-			// Create parent directory if needed
-			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-				fmt.Printf("  ⚠️  Failed to create parent directory for %s: %v\n", fileInfo.OriginalPath, err)
-				skippedCount++
-				continue
-			}
 
-			if err := arch.CopyFile(backupFilePath, destPath); err != nil {
-				fmt.Printf("  ⚠️  Failed to restore %s: %v\n", fileInfo.OriginalPath, err)
-				skippedCount++
-				continue
-			}
+			os.RemoveAll(persistentPackagesDir)
 
-			// Restore permissions
-			if err := os.Chmod(destPath, fileInfo.Mode); err != nil {
-				fmt.Printf("  ⚠️  Failed to restore permissions for %s: %v\n", fileInfo.OriginalPath, err)
+			arch := archiver.NewArchiver()
+			if err := arch.CopyDir(packagesDir, persistentPackagesDir); err != nil {
+				fmt.Printf("  ⚠️  Failed to copy packages: %v\n", err)
+			} else {
+				fmt.Printf("  ✓ Packages saved to %s\n", persistentPackagesDir)
 			}
 		}
-
-		fmt.Printf("  ✓ Restored %s\n", fileInfo.OriginalPath)
 	}
 
-	// Print summary
-	successCount := len(meta.Files) - skippedCount
+	if options.RestoreMacOSDefaults && fileExists(macosDefaultsFile) {
+		fmt.Println("\n🔧 Restoring macOS defaults...")
+		dm := defaults.NewDefaultsManager("")
+		if err := dm.RestoreAll(macosDefaultsFile); err != nil {
+			fmt.Printf("  ⚠️  Failed to restore macOS defaults: %v\n", err)
+		}
+	}
+
+	if options.InstallHomebrew && fileExists(filepath.Join(persistentPackagesDir, "Brewfile")) {
+		fmt.Println("\n🍺 Installing Homebrew packages...")
+		if err := runCommand("brew", "bundle", "--file="+filepath.Join(persistentPackagesDir, "Brewfile")); err != nil {
+			fmt.Printf("  ⚠️  Failed to install Homebrew packages: %v\n", err)
+			fmt.Println("  💡 Run manually: brew bundle --file=" + filepath.Join(persistentPackagesDir, "Brewfile"))
+		} else {
+			fmt.Println("  ✓ Homebrew packages installed")
+		}
+	}
+
+	if options.InstallMAS && fileExists(filepath.Join(persistentPackagesDir, "mas-apps.txt")) {
+		fmt.Println("\n🏪 Installing Mac App Store apps...")
+		if !commandExists("mas") {
+			fmt.Println("  ⚠️  'mas' not installed. Install with: brew install mas")
+		} else {
+			masFile := filepath.Join(persistentPackagesDir, "mas-apps.txt")
+			content, _ := os.ReadFile(masFile)
+			lines := strings.Split(string(content), "\n")
+			installed := 0
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				parts := strings.Fields(line)
+				if len(parts) >= 1 {
+					appID := parts[0]
+					if err := runCommand("mas", "install", appID); err != nil {
+						fmt.Printf("  ⚠️  Failed to install app %s\n", appID)
+					} else {
+						installed++
+					}
+				}
+			}
+			fmt.Printf("  ✓ Installed %d Mac App Store apps\n", installed)
+		}
+	}
+
+	if options.InstallVSCode && fileExists(filepath.Join(persistentPackagesDir, "vscode-extensions.txt")) {
+		fmt.Println("\n💻 Installing VS Code extensions...")
+		if !commandExists("code") {
+			fmt.Println("  ⚠️  'code' command not found. Install VS Code first.")
+		} else {
+			vscodeFile := filepath.Join(persistentPackagesDir, "vscode-extensions.txt")
+			content, _ := os.ReadFile(vscodeFile)
+			lines := strings.Split(string(content), "\n")
+			installed := 0
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				if err := runCommand("code", "--install-extension", line); err != nil {
+					fmt.Printf("  ⚠️  Failed to install extension %s\n", line)
+				} else {
+					installed++
+				}
+			}
+			fmt.Printf("  ✓ Installed %d VS Code extensions\n", installed)
+		}
+	}
+
+	if options.InstallNPM && fileExists(filepath.Join(persistentPackagesDir, "npm-global.txt")) {
+		fmt.Println("\n📦 Installing NPM global packages...")
+		if !commandExists("npm") {
+			fmt.Println("  ⚠️  'npm' not found. Install Node.js first.")
+		} else {
+			fmt.Println("  ℹ️  NPM package list available at: " + filepath.Join(persistentPackagesDir, "npm-global.txt"))
+			fmt.Println("  💡 Review and install manually as needed")
+		}
+	}
+
 	fmt.Println("\n" + strings.Repeat("=", 50))
 	fmt.Println("✅ Restore completed!")
 	fmt.Println(strings.Repeat("=", 50))
-	fmt.Printf("\n✓ Successfully restored: %d items\n", successCount)
-	if skippedCount > 0 {
-		fmt.Printf("⊘ Skipped: %d items\n", skippedCount)
-	}
 
-	// Show next steps
 	fmt.Println("\n💡 Next steps:")
-	fmt.Println("   1. Review restored files")
-	fmt.Println("   2. Install packages from packages/ directory:")
-
-	packagesDir := filepath.Join(extractDir, "packages")
-	if _, err := os.Stat(filepath.Join(packagesDir, "Brewfile")); err == nil {
-		fmt.Println("      - brew bundle --file=" + filepath.Join(packagesDir, "Brewfile"))
+	if fileExists(filepath.Join(persistentPackagesDir, "non-brew-apps.txt")) {
+		fmt.Println("   • Review non-Homebrew apps: cat " + filepath.Join(persistentPackagesDir, "non-brew-apps.txt"))
 	}
-	if _, err := os.Stat(filepath.Join(packagesDir, "vscode-extensions.txt")); err == nil {
-		fmt.Println("      - cat " + filepath.Join(packagesDir, "vscode-extensions.txt") + " | xargs -L 1 code --install-extension")
+	if options.RestoreMacOSDefaults {
+		fmt.Println("   • Logout/restart for macOS defaults to fully take effect")
+		fmt.Println("   • Or run: killall Dock Finder SystemUIServer")
 	}
-	fmt.Println("   3. Restart your terminal/shell")
-	fmt.Println("   4. Test SSH connections and other credentials")
+	if options.RestoreShellHistory {
+		fmt.Println("   • Restart terminal to load shell history")
+	}
+	fmt.Println("   • Test SSH connections and other credentials")
 
 	return nil
 }
 
 func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata.FileInfo, error) {
-	// Create restore plan file
+
 	planPath := filepath.Join(tempDir, "RESTORE_PLAN")
 
 	var content strings.Builder
@@ -289,7 +426,6 @@ func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata
 		return nil, fmt.Errorf("failed to create restore plan: %w", err)
 	}
 
-	// Get editor
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = os.Getenv("VISUAL")
@@ -303,7 +439,6 @@ func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata
 	fmt.Println("   Change 'pick' to 'drop' to skip files")
 	fmt.Println("   Save and close when done")
 
-	// Open editor
 	cmd := exec.Command(editor, planPath)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -313,19 +448,16 @@ func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata
 		return nil, fmt.Errorf("editor failed: %w", err)
 	}
 
-	// Parse edited file
 	planContent, err := os.ReadFile(planPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read restore plan: %w", err)
 	}
 
-	// Build map of original paths to file info
 	fileMap := make(map[string]metadata.FileInfo)
 	for _, f := range files {
 		fileMap[f.OriginalPath] = f
 	}
 
-	// Parse selections
 	var selected []metadata.FileInfo
 	scanner := bufio.NewScanner(strings.NewReader(string(planContent)))
 	lineNum := 0
@@ -334,12 +466,10 @@ func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata
 		lineNum++
 		line := strings.TrimSpace(scanner.Text())
 
-		// Skip comments and empty lines
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 
-		// Parse line: "pick [TYPE] /path/to/file (size)"
 		parts := strings.Fields(line)
 		if len(parts) < 3 {
 			fmt.Printf("⚠️  Warning: skipping malformed line %d: %s\n", lineNum, line)
@@ -352,7 +482,6 @@ func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata
 			continue
 		}
 
-		// Extract path - everything between "]" and "("
 		restOfLine := strings.Join(parts[1:], " ")
 		startIdx := strings.Index(restOfLine, "]")
 		endIdx := strings.LastIndex(restOfLine, "(")
@@ -378,4 +507,73 @@ func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata
 	}
 
 	return selected, nil
+}
+
+func promptRestoreOptions(hasBrewfile, hasMAS, hasVSCode, hasNPM, hasMacOSDefaults, hasShellHistory bool) (RestoreOptions, error) {
+	reader := bufio.NewReader(os.Stdin)
+	options := RestoreOptions{}
+
+	fmt.Println("\n" + strings.Repeat("=", 50))
+	fmt.Println("🎯 Restore Options")
+	fmt.Println(strings.Repeat("=", 50))
+	fmt.Println("\nSelect what to restore/install:")
+
+	options.RestoreFiles = true
+	fmt.Println("\n✓ Files (dotfiles, SSH, GPG, configs, etc.) - Always included")
+
+	if hasMacOSDefaults {
+		fmt.Print("\n🔧 Restore macOS defaults (Dock, Finder, trackpad, etc.)? [Y/n]: ")
+		response, _ := reader.ReadString('\n')
+		options.RestoreMacOSDefaults = !strings.EqualFold(strings.TrimSpace(response), "n")
+	}
+
+	if hasShellHistory {
+		fmt.Print("\n📜 Restore shell history? [Y/n]: ")
+		response, _ := reader.ReadString('\n')
+		options.RestoreShellHistory = !strings.EqualFold(strings.TrimSpace(response), "n")
+	}
+
+	if hasBrewfile {
+		fmt.Print("\n🍺 Install Homebrew packages (this may take a while)? [Y/n]: ")
+		response, _ := reader.ReadString('\n')
+		options.InstallHomebrew = !strings.EqualFold(strings.TrimSpace(response), "n")
+	}
+
+	if hasMAS {
+		fmt.Print("\n🏪 Install Mac App Store apps? [y/N]: ")
+		response, _ := reader.ReadString('\n')
+		options.InstallMAS = strings.EqualFold(strings.TrimSpace(response), "y") || strings.EqualFold(strings.TrimSpace(response), "yes")
+	}
+
+	if hasVSCode {
+		fmt.Print("\n💻 Install VS Code extensions? [Y/n]: ")
+		response, _ := reader.ReadString('\n')
+		options.InstallVSCode = !strings.EqualFold(strings.TrimSpace(response), "n")
+	}
+
+	if hasNPM {
+		fmt.Print("\n📦 Install NPM global packages? [y/N]: ")
+		response, _ := reader.ReadString('\n')
+		options.InstallNPM = strings.EqualFold(strings.TrimSpace(response), "y") || strings.EqualFold(strings.TrimSpace(response), "yes")
+	}
+
+	fmt.Println("\n" + strings.Repeat("=", 50))
+	return options, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func commandExists(cmd string) bool {
+	_, err := exec.LookPath(cmd)
+	return err == nil
+}
+
+func runCommand(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }

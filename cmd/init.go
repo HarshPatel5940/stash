@@ -36,19 +36,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 	configPath := filepath.Join(homeDir, ".stash.yaml")
 	keyPath := filepath.Join(homeDir, ".stash.key")
 
-	// Check if config already exists
 	configExists := false
 	if _, err := os.Stat(configPath); err == nil {
 		configExists = true
 	}
 
-	// Check if key already exists
 	keyExists := false
 	if _, err := os.Stat(keyPath); err == nil {
 		keyExists = true
 	}
 
-	// Create config if it doesn't exist
 	if configExists {
 		fmt.Printf("✓ Config already exists: %s\n", configPath)
 	} else {
@@ -59,7 +56,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Printf("✓ Created config: %s\n", configPath)
 	}
 
-	// Create encryption key if it doesn't exist
 	if keyExists {
 		fmt.Printf("✓ Encryption key already exists: %s\n", keyPath)
 	} else {
@@ -70,7 +66,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Printf("✓ Generated encryption key: %s\n", keyPath)
 
 		fmt.Println("\n" + strings.Repeat("=", 60))
-		fmt.Println("⚠️  CRITICAL: KEEP YOUR ENCRYPTION KEY SAFE!")
 		fmt.Println(strings.Repeat("=", 60))
 		fmt.Printf("\n🔑 Key location: %s\n", keyPath)
 		fmt.Println("\n📋 Action items:")

@@ -9,50 +9,53 @@ import (
 	"strings"
 )
 
-// Packager handles collecting package lists from various package managers
+type AppInfo struct {
+	Name       string
+	Path       string
+	InHomebrew bool
+}
+
 type Packager struct {
 	outputDir string
 }
 
-// NewPackager creates a new packager
 func NewPackager(outputDir string) *Packager {
 	return &Packager{
 		outputDir: outputDir,
 	}
 }
 
-// CollectAll collects all package lists
 func (p *Packager) CollectAll() (map[string]int, error) {
 	counts := make(map[string]int)
 
-	// Homebrew
 	if err := p.CollectHomebrew(); err == nil {
 		count := p.countLines(filepath.Join(p.outputDir, "Brewfile"))
 		counts["homebrew"] = count
 	}
 
-	// MAS
 	if err := p.CollectMAS(); err == nil {
 		count := p.countLines(filepath.Join(p.outputDir, "mas-apps.txt"))
 		counts["mas"] = count
 	}
 
-	// VS Code
 	if err := p.CollectVSCode(); err == nil {
 		count := p.countLines(filepath.Join(p.outputDir, "vscode-extensions.txt"))
 		counts["vscode"] = count
 	}
 
-	// NPM
 	if err := p.CollectNPM(); err == nil {
 		count := p.countLines(filepath.Join(p.outputDir, "npm-global.txt"))
 		counts["npm"] = count
 	}
 
+	if err := p.DetectNonBrewApps(); err == nil {
+		count := p.countLines(filepath.Join(p.outputDir, "non-brew-apps.txt"))
+		counts["non-brew-apps"] = count
+	}
+
 	return counts, nil
 }
 
-// CollectHomebrew dumps Brewfile
 func (p *Packager) CollectHomebrew() error {
 	if !commandExists("brew") {
 		return fmt.Errorf("brew not installed")
@@ -60,7 +63,6 @@ func (p *Packager) CollectHomebrew() error {
 
 	brewfile := filepath.Join(p.outputDir, "Brewfile")
 
-	// Use brew bundle dump to create Brewfile
 	cmd := exec.Command("brew", "bundle", "dump", "--file="+brewfile, "--force")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -72,7 +74,6 @@ func (p *Packager) CollectHomebrew() error {
 	return nil
 }
 
-// CollectMAS collects Mac App Store apps
 func (p *Packager) CollectMAS() error {
 	if !commandExists("mas") {
 		return fmt.Errorf("mas not installed")
@@ -87,7 +88,6 @@ func (p *Packager) CollectMAS() error {
 	return os.WriteFile(masFile, output, 0644)
 }
 
-// CollectVSCode collects VS Code extensions
 func (p *Packager) CollectVSCode() error {
 	if !commandExists("code") {
 		return fmt.Errorf("code not installed")
@@ -102,7 +102,6 @@ func (p *Packager) CollectVSCode() error {
 	return os.WriteFile(vscodeFile, output, 0644)
 }
 
-// CollectNPM collects global npm packages
 func (p *Packager) CollectNPM() error {
 	if !commandExists("npm") {
 		return fmt.Errorf("npm not installed")
@@ -110,8 +109,7 @@ func (p *Packager) CollectNPM() error {
 
 	output, err := exec.Command("npm", "list", "-g", "--depth=0").Output()
 	if err != nil {
-		// npm list returns exit code 1 even on success sometimes
-		// So we check if we got output
+
 		if len(output) == 0 {
 			return fmt.Errorf("npm list failed: %v", err)
 		}
@@ -121,13 +119,94 @@ func (p *Packager) CollectNPM() error {
 	return os.WriteFile(npmFile, output, 0644)
 }
 
-// commandExists checks if a command is available
 func commandExists(cmd string) bool {
 	_, err := exec.LookPath(cmd)
 	return err == nil
 }
 
-// countLines counts non-empty lines in a file
+func (p *Packager) DetectNonBrewApps() error {
+
+	installedApps, err := p.getInstalledApps()
+	if err != nil {
+		return fmt.Errorf("failed to get installed apps: %w", err)
+	}
+
+	brewApps, err := p.getBrewCasks()
+	if err != nil {
+
+		brewApps = make(map[string]bool)
+	}
+
+	var nonBrewApps []AppInfo
+	for _, app := range installedApps {
+		appNameLower := strings.ToLower(strings.TrimSuffix(app.Name, ".app"))
+		if !brewApps[appNameLower] {
+			app.InHomebrew = false
+			nonBrewApps = append(nonBrewApps, app)
+		}
+	}
+
+	var output strings.Builder
+	output.WriteString("# Applications not managed by Homebrew\n")
+	output.WriteString("# These apps were likely installed manually (DMG, App Store, etc.)\n")
+	output.WriteString("# You'll need to reinstall these manually after restore\n\n")
+
+	for _, app := range nonBrewApps {
+		output.WriteString(fmt.Sprintf("%s\n", app.Name))
+	}
+
+	outputFile := filepath.Join(p.outputDir, "non-brew-apps.txt")
+	return os.WriteFile(outputFile, []byte(output.String()), 0644)
+}
+
+func (p *Packager) getInstalledApps() ([]AppInfo, error) {
+	appDirs := []string{
+		"/Applications",
+		filepath.Join(os.Getenv("HOME"), "Applications"),
+	}
+
+	var apps []AppInfo
+	for _, dir := range appDirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name(), ".app") {
+				apps = append(apps, AppInfo{
+					Name: entry.Name(),
+					Path: filepath.Join(dir, entry.Name()),
+				})
+			}
+		}
+	}
+
+	return apps, nil
+}
+
+func (p *Packager) getBrewCasks() (map[string]bool, error) {
+	if !commandExists("brew") {
+		return nil, fmt.Errorf("brew not installed")
+	}
+
+	output, err := exec.Command("brew", "list", "--cask").Output()
+	if err != nil {
+		return nil, err
+	}
+
+	casks := make(map[string]bool)
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		cask := strings.TrimSpace(line)
+		if cask != "" {
+			casks[strings.ToLower(cask)] = true
+		}
+	}
+
+	return casks, nil
+}
+
 func (p *Packager) countLines(path string) int {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -137,7 +216,7 @@ func (p *Packager) countLines(path string) int {
 	lines := strings.Split(string(data), "\n")
 	count := 0
 	for _, line := range lines {
-		if strings.TrimSpace(line) != "" {
+		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#") {
 			count++
 		}
 	}

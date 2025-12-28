@@ -42,14 +42,13 @@ type backupInfo struct {
 }
 
 func runList(cmd *cobra.Command, args []string) error {
-	// Load config
+
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 	cfg.ExpandPaths()
 
-	// Check if backup directory exists
 	if _, err := os.Stat(cfg.BackupDir); os.IsNotExist(err) {
 		fmt.Printf("📁 No backups found\n")
 		fmt.Printf("\n💡 Backup directory doesn't exist: %s\n", cfg.BackupDir)
@@ -57,7 +56,6 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Find all backup files
 	backups, err := findBackups(cfg.BackupDir)
 	if err != nil {
 		return fmt.Errorf("failed to find backups: %w", err)
@@ -69,12 +67,10 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Sort backups by modification time (newest first)
 	sort.Slice(backups, func(i, j int) bool {
 		return backups[i].ModTime.After(backups[j].ModTime)
 	})
 
-	// Display backups
 	fmt.Println("📦 Available Backups")
 	fmt.Println(strings.Repeat("=", 70))
 	fmt.Println()
@@ -119,7 +115,6 @@ func runList(cmd *cobra.Command, args []string) error {
 func findBackups(backupDir string) ([]backupInfo, error) {
 	var backups []backupInfo
 
-	// Read directory
 	entries, err := os.ReadDir(backupDir)
 	if err != nil {
 		return nil, err
@@ -132,7 +127,6 @@ func findBackups(backupDir string) ([]backupInfo, error) {
 
 		name := entry.Name()
 
-		// Look for .tar.gz.age (encrypted) or .tar.gz (unencrypted) files
 		if !strings.HasSuffix(name, ".tar.gz.age") && !strings.HasSuffix(name, ".tar.gz") {
 			continue
 		}
@@ -151,10 +145,8 @@ func findBackups(backupDir string) ([]backupInfo, error) {
 			Encrypted: strings.HasSuffix(name, ".age"),
 		}
 
-		// Try to read metadata if it's a .tar.gz file (not encrypted)
 		if strings.HasSuffix(name, ".tar.gz") && !strings.HasSuffix(name, ".age") {
-			// For unencrypted backups, we could extract metadata
-			// For now, skip metadata reading to keep it simple
+
 		}
 
 		backups = append(backups, backup)
@@ -164,8 +156,6 @@ func findBackups(backupDir string) ([]backupInfo, error) {
 }
 
 func readMetadataFromBackup(backupPath string) (*metadata.Metadata, error) {
-	// This would require extracting the tar.gz and reading metadata.json
-	// Skip for now - only works for unencrypted backups anyway
-	// Could be enhanced later
+
 	return nil, nil
 }

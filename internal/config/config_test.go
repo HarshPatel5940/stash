@@ -31,11 +31,10 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestConfigSave(t *testing.T) {
-	// Create temp directory
+
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "test-config.yaml")
 
-	// Create and save config
 	cfg := DefaultConfig()
 	cfg.BackupDir = "/tmp/test-backups"
 
@@ -44,12 +43,10 @@ func TestConfigSave(t *testing.T) {
 		t.Fatalf("Failed to save config: %v", err)
 	}
 
-	// Verify file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		t.Error("Config file was not created")
 	}
 
-	// Verify file is readable
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("Failed to read saved config: %v", err)
@@ -71,7 +68,6 @@ func TestExpandPaths(t *testing.T) {
 
 	homeDir, _ := os.UserHomeDir()
 
-	// Check that tilde was expanded
 	if cfg.BackupDir == "~/backups" {
 		t.Error("BackupDir tilde was not expanded")
 	}
@@ -94,7 +90,6 @@ func TestExpandPaths(t *testing.T) {
 func TestConfigExcludePatterns(t *testing.T) {
 	cfg := DefaultConfig()
 
-	// Verify common exclude patterns are present
 	expectedPatterns := []string{
 		"*/node_modules/*",
 		"*/vendor/*",

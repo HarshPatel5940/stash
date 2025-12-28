@@ -34,6 +34,6 @@ func Execute() {
 }
 
 func init() {
-	// Keep completion command enabled for Homebrew to generate completions
+
 	rootCmd.CompletionOptions.DisableDefaultCmd = false
 }

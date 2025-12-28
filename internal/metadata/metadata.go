@@ -7,6 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,6 +32,7 @@ type Metadata struct {
 	Files         []FileInfo     `json:"files"`
 	PackageCounts map[string]int `json:"package_counts"`
 	BackupSize    int64          `json:"backup_size"`
+	mu            sync.Mutex
 }
 
 func New() *Metadata {
@@ -60,21 +65,35 @@ func (m *Metadata) AddFile(originalPath, backupPath string) error {
 		IsDir:        info.IsDir(),
 	}
 
-	// Calculate checksum for files (not directories)
 	if !info.IsDir() {
 		checksum, err := calculateChecksum(originalPath)
 		if err != nil {
 			return err
 		}
 		fileInfo.Checksum = checksum
-		m.BackupSize += info.Size()
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !info.IsDir() {
+		m.BackupSize += info.Size()
+	}
 	m.Files = append(m.Files, fileInfo)
 	return nil
 }
 
+func (m *Metadata) AddFileInfo(fileInfo FileInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.Files = append(m.Files, fileInfo)
+	m.BackupSize += fileInfo.Size
+}
+
 func (m *Metadata) SetPackageCount(packageType string, count int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.PackageCounts[packageType] = count
 }
 
@@ -119,19 +138,45 @@ func calculateChecksum(path string) (string, error) {
 func (m *Metadata) Summary() string {
 	fileCount := 0
 	dirCount := 0
+
+	categorySizes := make(map[string]int64)
+
 	for _, f := range m.Files {
 		if f.IsDir {
 			dirCount++
 		} else {
 			fileCount++
 		}
+
+		if f.Size > 0 {
+			parts := strings.Split(f.BackupPath, string(filepath.Separator))
+			if len(parts) > 0 {
+				category := parts[0]
+				categorySizes[category] += f.Size
+			}
+		}
 	}
 
 	summary := fmt.Sprintf("Backup created: %s\n", m.Timestamp.Format("2006-01-02 15:04:05"))
 	summary += fmt.Sprintf("Hostname: %s\n", m.Hostname)
-	summary += fmt.Sprintf("Username: %s\n", m.Username)
-	summary += fmt.Sprintf("Files: %d, Directories: %d\n", fileCount, dirCount)
-	summary += fmt.Sprintf("Total size: %.2f MB\n", float64(m.BackupSize)/(1024*1024))
+
+	summary += "\nSize Breakdown:\n"
+
+	type category struct {
+		Name string
+		Size int64
+	}
+	var categories []category
+	for name, size := range categorySizes {
+		categories = append(categories, category{name, size})
+	}
+	sort.Slice(categories, func(i, j int) bool {
+		return categories[i].Size > categories[j].Size
+	})
+
+	for _, c := range categories {
+		summary += fmt.Sprintf("  %s: %s\n", c.Name, FormatSize(c.Size))
+	}
 
 	if len(m.PackageCounts) > 0 {
 		summary += "\nPackages:\n"
