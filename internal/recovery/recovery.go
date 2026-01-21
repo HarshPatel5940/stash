@@ -18,13 +18,13 @@ import (
 
 // RecoveryState represents the state of a partial backup
 type RecoveryState struct {
-	BackupPath      string            `json:"backup_path"`
-	Timestamp       time.Time         `json:"timestamp"`
-	CompletedTasks  []string          `json:"completed_tasks"`
-	FailedTask      string            `json:"failed_task"`
-	ErrorMessage    string            `json:"error_message"`
-	Metadata        *metadata.Metadata `json:"metadata"`
-	CanResume       bool              `json:"can_resume"`
+	BackupPath     string             `json:"backup_path"`
+	Timestamp      time.Time          `json:"timestamp"`
+	CompletedTasks []string           `json:"completed_tasks"`
+	FailedTask     string             `json:"failed_task"`
+	ErrorMessage   string             `json:"error_message"`
+	Metadata       *metadata.Metadata `json:"metadata"`
+	CanResume      bool               `json:"can_resume"`
 }
 
 // Manager handles backup recovery operations

@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	diffVerbose     bool
+	diffVerbose      bool
 	diffShowPackages bool
 )
 

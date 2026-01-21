@@ -172,17 +172,17 @@ func (bs *BackupStats) ToMap() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"categories":       categories,
-		"total_files":      bs.TotalFiles,
-		"original_size":    bs.OriginalSize,
-		"compressed_size":  bs.CompressedSize,
-		"encrypted_size":   bs.EncryptedSize,
+		"categories":        categories,
+		"total_files":       bs.TotalFiles,
+		"original_size":     bs.OriginalSize,
+		"compressed_size":   bs.CompressedSize,
+		"encrypted_size":    bs.EncryptedSize,
 		"compression_ratio": bs.GetCompressionRatio(),
-		"size_reduction":   bs.GetSizeReduction(),
-		"total_time":       formatDuration(bs.TotalTime),
-		"largest_files":    largestFiles,
-		"processing_speed": bs.GetProcessingSpeed(),
-		"bytes_per_second": bs.GetBytesPerSecond(),
+		"size_reduction":    bs.GetSizeReduction(),
+		"total_time":        formatDuration(bs.TotalTime),
+		"largest_files":     largestFiles,
+		"processing_speed":  bs.GetProcessingSpeed(),
+		"bytes_per_second":  bs.GetBytesPerSecond(),
 	}
 }
 

@@ -4,10 +4,10 @@
 class Stash < Formula
   desc "Mac backup CLI tool - stash your Mac, restore anywhere"
   homepage "https://github.com/harshpatel5940/stash"
-  url "https://github.com/harshpatel5940/stash/archive/refs/tags/v1.2.0.tar.gz"
+  url "https://github.com/harshpatel5940/stash/archive/refs/tags/v1.2.1.tar.gz"
   sha256 "REPLACE_WITH_ACTUAL_SHA256"
   license "MIT"
-  version "1.2.0"
+  version "1.2.1"
 
   depends_on "go" => :build
 

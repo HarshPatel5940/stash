@@ -34,12 +34,12 @@ const (
 
 // StashError represents an error with context and suggestions
 type StashError struct {
-	Type       ErrorType
-	Message    string
-	Suggestion string
+	Type        ErrorType
+	Message     string
+	Suggestion  string
 	Alternative string
-	Cause      error
-	FilePath   string
+	Cause       error
+	FilePath    string
 }
 
 // Error implements the error interface
