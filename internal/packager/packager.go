@@ -48,6 +48,31 @@ func (p *Packager) CollectAll() (map[string]int, error) {
 		counts["npm"] = count
 	}
 
+	if err := p.CollectPip(); err == nil {
+		count := p.countLines(filepath.Join(p.outputDir, "pip-requirements.txt"))
+		counts["pip"] = count
+	}
+
+	if err := p.CollectCargo(); err == nil {
+		count := p.countLines(filepath.Join(p.outputDir, "cargo-packages.txt"))
+		counts["cargo"] = count
+	}
+
+	if err := p.CollectPnpm(); err == nil {
+		count := p.countLines(filepath.Join(p.outputDir, "pnpm-global.txt"))
+		counts["pnpm"] = count
+	}
+
+	if err := p.CollectGem(); err == nil {
+		count := p.countLines(filepath.Join(p.outputDir, "gem-packages.txt"))
+		counts["gem"] = count
+	}
+
+	if err := p.CollectComposer(); err == nil {
+		count := p.countLines(filepath.Join(p.outputDir, "composer-global.txt"))
+		counts["composer"] = count
+	}
+
 	if err := p.DetectNonBrewApps(); err == nil {
 		count := p.countLines(filepath.Join(p.outputDir, "non-brew-apps.txt"))
 		counts["non-brew-apps"] = count
@@ -117,6 +142,99 @@ func (p *Packager) CollectNPM() error {
 
 	npmFile := filepath.Join(p.outputDir, "npm-global.txt")
 	return os.WriteFile(npmFile, output, 0644)
+}
+
+func (p *Packager) CollectPip() error {
+	// Try pip3 first (more common on macOS), then pip
+	var cmd *exec.Cmd
+	if commandExists("pip3") {
+		cmd = exec.Command("pip3", "freeze")
+	} else if commandExists("pip") {
+		cmd = exec.Command("pip", "freeze")
+	} else {
+		return fmt.Errorf("pip/pip3 not installed")
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("pip freeze failed: %v", err)
+	}
+
+	pipFile := filepath.Join(p.outputDir, "pip-requirements.txt")
+	return os.WriteFile(pipFile, output, 0644)
+}
+
+func (p *Packager) CollectCargo() error {
+	if !commandExists("cargo") {
+		return fmt.Errorf("cargo not installed")
+	}
+
+	output, err := exec.Command("cargo", "install", "--list").Output()
+	if err != nil {
+		return fmt.Errorf("cargo install --list failed: %v", err)
+	}
+
+	cargoFile := filepath.Join(p.outputDir, "cargo-packages.txt")
+	return os.WriteFile(cargoFile, output, 0644)
+}
+
+func (p *Packager) CollectPnpm() error {
+	if !commandExists("pnpm") {
+		return fmt.Errorf("pnpm not installed")
+	}
+
+	output, err := exec.Command("pnpm", "list", "-g", "--depth=0").Output()
+	if err != nil {
+		// pnpm might return non-zero exit code even on success
+		if len(output) == 0 {
+			return fmt.Errorf("pnpm list failed: %v", err)
+		}
+	}
+
+	pnpmFile := filepath.Join(p.outputDir, "pnpm-global.txt")
+	return os.WriteFile(pnpmFile, output, 0644)
+}
+
+func (p *Packager) CollectGem() error {
+	if !commandExists("gem") {
+		return fmt.Errorf("gem not installed")
+	}
+
+	output, err := exec.Command("gem", "list").Output()
+	if err != nil {
+		return fmt.Errorf("gem list failed: %v", err)
+	}
+
+	gemFile := filepath.Join(p.outputDir, "gem-packages.txt")
+	return os.WriteFile(gemFile, output, 0644)
+}
+
+func (p *Packager) CollectComposer() error {
+	if !commandExists("composer") {
+		return fmt.Errorf("composer not installed")
+	}
+
+	// Check if composer has global packages
+	homeDir := os.Getenv("HOME")
+	composerDir := filepath.Join(homeDir, ".composer", "composer.json")
+
+	// If composer.json doesn't exist, there are no global packages
+	if _, err := os.Stat(composerDir); os.IsNotExist(err) {
+		// Create empty file to indicate composer is installed but no global packages
+		composerFile := filepath.Join(p.outputDir, "composer-global.txt")
+		return os.WriteFile(composerFile, []byte("# No global composer packages installed\n"), 0644)
+	}
+
+	output, err := exec.Command("composer", "global", "show").Output()
+	if err != nil {
+		// If command fails, create a note about it
+		composerFile := filepath.Join(p.outputDir, "composer-global.txt")
+		note := fmt.Sprintf("# composer global show failed: %v\n# composer.json exists at %s\n", err, composerDir)
+		return os.WriteFile(composerFile, []byte(note), 0644)
+	}
+
+	composerFile := filepath.Join(p.outputDir, "composer-global.txt")
+	return os.WriteFile(composerFile, output, 0644)
 }
 
 func commandExists(cmd string) bool {

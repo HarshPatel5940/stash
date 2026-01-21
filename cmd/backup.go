@@ -14,11 +14,17 @@ import (
 	"github.com/harshpatel5940/stash/internal/config"
 	"github.com/harshpatel5940/stash/internal/crypto"
 	"github.com/harshpatel5940/stash/internal/defaults"
+	"github.com/harshpatel5940/stash/internal/docker"
+	stasherrors "github.com/harshpatel5940/stash/internal/errors"
 	"github.com/harshpatel5940/stash/internal/finder"
 	"github.com/harshpatel5940/stash/internal/fonts"
 	"github.com/harshpatel5940/stash/internal/gittracker"
+	"github.com/harshpatel5940/stash/internal/incremental"
+	"github.com/harshpatel5940/stash/internal/kubernetes"
 	"github.com/harshpatel5940/stash/internal/metadata"
 	"github.com/harshpatel5940/stash/internal/packager"
+	"github.com/harshpatel5940/stash/internal/recovery"
+	"github.com/harshpatel5940/stash/internal/stats"
 	"github.com/harshpatel5940/stash/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -31,6 +37,7 @@ var (
 	backupVerbose      bool
 	backupKeepCount    int
 	backupSkipBrowsers bool
+	backupIncremental  bool
 )
 
 var backupCmd = &cobra.Command{
@@ -65,9 +72,13 @@ func init() {
 	backupCmd.Flags().BoolVarP(&backupVerbose, "verbose", "v", false, "Show detailed output for debugging")
 	backupCmd.Flags().IntVar(&backupKeepCount, "keep", 5, "Number of backups to keep (older ones auto-deleted)")
 	backupCmd.Flags().BoolVar(&backupSkipBrowsers, "skip-browsers", false, "Skip browser data backup")
+	backupCmd.Flags().BoolVarP(&backupIncremental, "incremental", "i", false, "Perform incremental backup (only changed files)")
 }
 
 func runBackup(cmd *cobra.Command, args []string) error {
+	// Initialize statistics tracking
+	backupStats := stats.New()
+
 	if backupDryRun {
 		fmt.Println("🔍 DRY RUN MODE - No files will be backed up")
 	} else {
@@ -77,7 +88,7 @@ func runBackup(cmd *cobra.Command, args []string) error {
 
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return stasherrors.WrapWithDetection(err, "Failed to load configuration")
 	}
 
 	ui.PrintSectionHeader("📦", "Starting Backup")
@@ -90,12 +101,40 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		cfg.EncryptionKey = backupEncryptKey
 	}
 
+	// Initialize incremental backup manager
+	var incrMgr *incremental.Manager
+	var doIncrementalBackup bool
+	if cfg.Incremental != nil && (cfg.Incremental.Enabled || backupIncremental) {
+		mgr, err := incremental.NewManager(cfg)
+		if err != nil {
+			ui.PrintWarning("Failed to initialize incremental backup: %v", err)
+		} else {
+			incrMgr = mgr
+
+			// Determine backup type
+			if backupIncremental && !incrMgr.ShouldDoFullBackup() {
+				doIncrementalBackup = true
+			} else if cfg.Incremental.Enabled && !incrMgr.ShouldDoFullBackup() {
+				doIncrementalBackup = true
+			}
+
+			// Show recommendation
+			recommendation := incrMgr.GetRecommendation()
+			if doIncrementalBackup {
+				ui.PrintInfo("📊 %s", recommendation)
+			} else {
+				ui.PrintInfo("📊 %s", recommendation)
+			}
+		}
+	}
+
+	// Initialize recovery manager
+	recoveryMgr := recovery.NewManager(cfg.BackupDir)
+
 	if !backupNoEncrypt {
 		encryptor := crypto.NewEncryptor(cfg.EncryptionKey)
 		if !encryptor.KeyExists() {
-			fmt.Printf("❌ Encryption key not found: %s\n", cfg.EncryptionKey)
-			fmt.Println("\n💡 Run 'stash init' to generate an encryption key")
-			return fmt.Errorf("encryption key not found")
+			return stasherrors.NewEncryptionError(cfg.EncryptionKey, nil)
 		}
 	}
 
@@ -115,6 +154,20 @@ func runBackup(cmd *cobra.Command, args []string) error {
 
 	meta := metadata.New()
 
+	// Set backup type in metadata
+	if doIncrementalBackup {
+		meta.SetBackupType("incremental")
+		meta.SetChangedFilesOnly(true)
+		if incrMgr != nil {
+			baseBackup := incrMgr.GetBaseBackup()
+			if baseBackup != "" {
+				meta.SetBaseBackup(baseBackup)
+			}
+		}
+	} else {
+		meta.SetBackupType("full")
+	}
+
 	dirs := []string{
 		"dotfiles",
 		"ssh",
@@ -129,6 +182,8 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		"browser-data",
 		"git-repos",
 		"fonts",
+		"docker",
+		"kubernetes",
 	}
 
 	if !backupDryRun {
@@ -147,19 +202,21 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	}
 
 	tasks := []backupTask{
-		{"Dotfiles", func() error { return backupDotfiles(tempDir, meta, arch, cfg) }},
-		{"Secrets", func() error { return backupSecrets(tempDir, meta, arch) }},
-		{"EnvFiles", func() error { return backupEnvFiles(tempDir, meta, arch, cfg) }},
-		{"PemFiles", func() error { return backupPemFiles(tempDir, meta, arch, cfg) }},
+		{"Dotfiles", func() error { return backupDotfiles(tempDir, meta, arch, cfg, incrMgr, doIncrementalBackup) }},
+		{"Secrets", func() error { return backupSecrets(tempDir, meta, arch, incrMgr, doIncrementalBackup) }},
+		{"EnvFiles", func() error { return backupEnvFiles(tempDir, meta, arch, cfg, incrMgr, doIncrementalBackup) }},
+		{"PemFiles", func() error { return backupPemFiles(tempDir, meta, arch, cfg, incrMgr, doIncrementalBackup) }},
 		{"Packages", func() error { return backupPackages(tempDir, meta) }},
 		{"MacOSDefaults", func() error { return backupMacOSDefaults(tempDir, meta) }},
-		{"ShellHistory", func() error { return backupShellHistory(tempDir, meta, arch) }},
+		{"ShellHistory", func() error { return backupShellHistory(tempDir, meta, arch, incrMgr, doIncrementalBackup) }},
 		{"GitRepos", func() error { return backupGitRepos(tempDir, meta) }},
 		{"Fonts", func() error { return backupFonts(tempDir, meta) }},
+		{"Docker", func() error { return backupDocker(tempDir, meta, cfg) }},
+		{"Kubernetes", func() error { return backupKubernetes(tempDir, meta) }},
 	}
 
 	if !backupSkipBrowsers {
-		tasks = append(tasks, backupTask{"BrowserData", func() error { return backupBrowserData(tempDir, meta) }})
+		tasks = append(tasks, backupTask{"BrowserData", func() error { return backupBrowserData(tempDir, meta, incrMgr, doIncrementalBackup) }})
 	} else if backupVerbose {
 		fmt.Println("🚫 Skipping browser data backup")
 	}
@@ -167,6 +224,8 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(tasks))
 	statusChan := make(chan string, len(tasks))
+	var errors []error
+	var errorsMu sync.Mutex
 
 	doneChan := make(chan bool)
 	if !backupVerbose {
@@ -191,16 +250,49 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		wg.Add(1)
 		go func(t backupTask) {
 			defer wg.Done()
+
+			taskStart := time.Now()
+
 			if backupVerbose {
 				fmt.Printf("Started: %s\n", t.Name)
 			}
+
 			if err := t.Func(); err != nil {
+				// Convert to structured error if needed
+				var stashErr *stasherrors.StashError
+				if se, ok := err.(*stasherrors.StashError); ok {
+					stashErr = se
+				} else {
+					stashErr = stasherrors.WrapWithDetection(err, fmt.Sprintf("Failed during %s", t.Name))
+				}
 
 				if backupVerbose {
 					fmt.Printf("⚠️  %s: %v\n", t.Name, err)
 				}
+
+				errorsMu.Lock()
+				errors = append(errors, stashErr)
+				errorsMu.Unlock()
+
 				errChan <- fmt.Errorf("%s: %w", t.Name, err)
+
+				// Mark task as failed in recovery system
+				if !backupDryRun {
+					recoveryMgr.MarkTaskFailed(filepath.Join(cfg.BackupDir, backupName), t.Name, err.Error())
+				}
+			} else {
+				// Mark task as complete
+				if !backupDryRun {
+					recoveryMgr.MarkTaskComplete(filepath.Join(cfg.BackupDir, backupName), t.Name)
+				}
 			}
+
+			taskDuration := time.Since(taskStart)
+
+			if backupVerbose {
+				fmt.Printf("Completed: %s (%.2fs)\n", t.Name, taskDuration.Seconds())
+			}
+
 			if !backupVerbose {
 				statusChan <- t.Name
 			}
@@ -215,8 +307,13 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		<-doneChan
 	}
 
+	// Handle errors with better messages
 	for err := range errChan {
-		ui.PrintWarning("%v", err)
+		if stashErr, ok := err.(*stasherrors.StashError); ok {
+			ui.PrintErrorWithSolution(stashErr.Message, stashErr.Suggestion, stashErr.Alternative)
+		} else {
+			ui.PrintWarning("%v", err)
+		}
 	}
 
 	readmePath := filepath.Join(tempDir, "README.txt")
@@ -274,22 +371,95 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		finalPath = encryptedPath
 	}
 
+	// Finalize statistics
+	fileInfo, _ := os.Stat(finalPath)
+	var finalSize int64
+	if fileInfo != nil {
+		finalSize = fileInfo.Size()
+	}
+
+	archiveInfo, _ := os.Stat(archivePath)
+	var compressedSize int64
+	if archiveInfo != nil {
+		compressedSize = archiveInfo.Size()
+	}
+
+	backupStats.Finalize(compressedSize, finalSize)
+
+	// Add metadata statistics
+	meta.SetCompressedSize(compressedSize)
+	meta.SetEncryptedSize(finalSize)
+	meta.SetTotalDuration(backupStats.TotalTime)
+
 	fmt.Println("\n" + strings.Repeat("=", 50))
 	fmt.Println("✅ Backup completed successfully!")
 	fmt.Println(strings.Repeat("=", 50))
 	fmt.Printf("\n📁 Backup location: %s\n", finalPath)
 
-	fileInfo, _ := os.Stat(finalPath)
-	if fileInfo != nil {
-		fmt.Printf("💾 Backup size: %s\n", metadata.FormatSize(fileInfo.Size()))
-	}
-
-	if backupVerbose {
-		fmt.Println("\n" + meta.Summary())
+	// Display detailed statistics
+	if !backupVerbose {
+		// Show summary statistics in normal mode
+		if doIncrementalBackup {
+			fmt.Printf("🔄 Backup type:     Incremental\n")
+		} else {
+			fmt.Printf("🔄 Backup type:     Full\n")
+		}
+		fmt.Printf("💾 Original size:   %s\n", ui.FormatBytes(meta.BackupSize))
+		fmt.Printf("📦 Compressed size: %s (%.1f%% reduction)\n", ui.FormatBytes(compressedSize), meta.GetCompressionRatio())
+		fmt.Printf("🔐 Encrypted size:  %s\n", ui.FormatBytes(finalSize))
+		fmt.Printf("⏱️  Total time:      %s\n", backupStats.TotalTime.Round(time.Second))
+		fmt.Printf("📊 Total files:     %d\n", meta.GetFileCount())
+	} else {
+		// Show detailed statistics in verbose mode
+		ui.PrintStatistics(backupStats.ToMap())
 	}
 
 	fmt.Println("\n📖 To restore this backup on a new Mac:")
 	fmt.Printf("   stash restore %s\n", filepath.Base(finalPath))
+
+	// Update incremental index after successful backup
+	if incrMgr != nil && !backupDryRun {
+		// Collect all backed up file paths
+		var backedUpFiles []string
+		for _, fileInfo := range meta.Files {
+			backedUpFiles = append(backedUpFiles, fileInfo.OriginalPath)
+		}
+
+		isFull := !doIncrementalBackup
+		if err := incrMgr.UpdateIndex(backupName, backedUpFiles, isFull); err != nil {
+			ui.PrintWarning("Failed to update incremental index: %v", err)
+		} else if backupVerbose {
+			ui.PrintSuccess("Updated incremental backup index")
+		}
+	}
+
+	// Register backup in the registry for restore chain resolution
+	if !backupDryRun {
+		registry, err := incremental.LoadRegistry()
+		if err != nil {
+			ui.PrintWarning("Failed to load backup registry: %v", err)
+		} else {
+			backupType := "full"
+			baseBackup := ""
+			if doIncrementalBackup {
+				backupType = "incremental"
+				if incrMgr != nil {
+					baseBackup = incrMgr.GetBaseBackup()
+				}
+			}
+			registry.RegisterBackup(backupName, finalPath, backupType, baseBackup)
+			if err := registry.Save(); err != nil {
+				ui.PrintWarning("Failed to save backup registry: %v", err)
+			} else if backupVerbose {
+				ui.PrintSuccess("Registered backup in registry")
+			}
+		}
+	}
+
+	// Clean up recovery state on successful completion
+	if !backupDryRun {
+		recoveryMgr.DeleteState(filepath.Join(cfg.BackupDir, backupName))
+	}
 
 	if backupKeepCount > 0 {
 		ui.PrintSectionHeader("🧹", "Cleaning up old backups...")
@@ -307,7 +477,25 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func backupDotfiles(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver, cfg *config.Config) error {
+// shouldBackupFile checks if a file should be backed up in incremental mode
+func shouldBackupFile(incrMgr *incremental.Manager, doIncremental bool, filePath string) bool {
+	// Always backup in full mode
+	if !doIncremental || incrMgr == nil {
+		return true
+	}
+
+	// Check if file has changed
+	changed, err := incrMgr.FindChangedFiles([]string{filePath})
+	if err != nil {
+		// If we can't determine, backup to be safe
+		return true
+	}
+
+	// Backup if file is in the changed list
+	return len(changed) > 0
+}
+
+func backupDotfiles(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver, cfg *config.Config, incrMgr *incremental.Manager, doIncremental bool) error {
 	dotfilesFinder, err := finder.NewDotfilesFinder()
 	if err != nil {
 		return err
@@ -319,7 +507,17 @@ func backupDotfiles(tempDir string, meta *metadata.Metadata, arch *archiver.Arch
 	}
 
 	count := 0
+	skipped := 0
 	for _, file := range dotfiles {
+		// Skip unchanged files in incremental mode
+		if !shouldBackupFile(incrMgr, doIncremental, file) {
+			if backupVerbose {
+				fmt.Printf("  ⏭  Skipping unchanged: %s\n", file)
+			}
+			skipped++
+			continue
+		}
+
 		fileName := filepath.Base(file)
 		destPath := filepath.Join(tempDir, "dotfiles", fileName)
 
@@ -342,6 +540,10 @@ func backupDotfiles(tempDir string, meta *metadata.Metadata, arch *archiver.Arch
 			}
 		}
 		count++
+	}
+
+	if doIncremental && skipped > 0 && backupVerbose {
+		fmt.Printf("  ⏭  Skipped %d unchanged dotfiles\n", skipped)
 	}
 
 	if configDir, found := dotfilesFinder.FindConfigDir(); found {
@@ -372,7 +574,7 @@ func backupDotfiles(tempDir string, meta *metadata.Metadata, arch *archiver.Arch
 	return nil
 }
 
-func backupSecrets(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver) error {
+func backupSecrets(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver, incrMgr *incremental.Manager, doIncremental bool) error {
 	dotfilesFinder, err := finder.NewDotfilesFinder()
 	if err != nil {
 		return err
@@ -411,7 +613,7 @@ func backupSecrets(tempDir string, meta *metadata.Metadata, arch *archiver.Archi
 	return nil
 }
 
-func backupEnvFiles(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver, cfg *config.Config) error {
+func backupEnvFiles(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver, cfg *config.Config, incrMgr *incremental.Manager, doIncremental bool) error {
 	envFinder := finder.NewEnvFilesFinder(cfg.SearchPaths, cfg.Exclude)
 	envFiles, err := envFinder.FindEnvFiles()
 	if err != nil {
@@ -419,7 +621,16 @@ func backupEnvFiles(tempDir string, meta *metadata.Metadata, arch *archiver.Arch
 	}
 
 	count := 0
+	skipped := 0
 	for _, file := range envFiles {
+		// Skip unchanged files in incremental mode
+		if !shouldBackupFile(incrMgr, doIncremental, file) {
+			if backupVerbose {
+				fmt.Printf("  ⏭  Skipping unchanged: %s\n", file)
+			}
+			skipped++
+			continue
+		}
 
 		relPath := strings.TrimPrefix(file, filepath.Dir(cfg.SearchPaths[0]))
 		relPath = strings.TrimPrefix(relPath, "/")
@@ -449,12 +660,16 @@ func backupEnvFiles(tempDir string, meta *metadata.Metadata, arch *archiver.Arch
 	}
 
 	if backupVerbose {
-		fmt.Printf("  ✓ Backed up %d .env files\n", count)
+		fmt.Printf("  ✓ Backed up %d .env files", count)
+		if doIncremental && skipped > 0 {
+			fmt.Printf(" (skipped %d unchanged)", skipped)
+		}
+		fmt.Println()
 	}
 	return nil
 }
 
-func backupPemFiles(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver, cfg *config.Config) error {
+func backupPemFiles(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver, cfg *config.Config, incrMgr *incremental.Manager, doIncremental bool) error {
 	envFinder := finder.NewEnvFilesFinder(cfg.SearchPaths, cfg.Exclude)
 	pemFiles, err := envFinder.FindPemFiles()
 	if err != nil {
@@ -462,7 +677,16 @@ func backupPemFiles(tempDir string, meta *metadata.Metadata, arch *archiver.Arch
 	}
 
 	count := 0
+	skipped := 0
 	for _, file := range pemFiles {
+		// Skip unchanged files in incremental mode
+		if !shouldBackupFile(incrMgr, doIncremental, file) {
+			if backupVerbose {
+				fmt.Printf("  ⏭  Skipping unchanged: %s\n", file)
+			}
+			skipped++
+			continue
+		}
 
 		relPath := strings.TrimPrefix(file, filepath.Dir(cfg.SearchPaths[0]))
 		relPath = strings.TrimPrefix(relPath, "/")
@@ -492,7 +716,11 @@ func backupPemFiles(tempDir string, meta *metadata.Metadata, arch *archiver.Arch
 	}
 
 	if backupVerbose {
-		fmt.Printf("  ✓ Backed up %d .pem files\n", count)
+		fmt.Printf("  ✓ Backed up %d .pem files", count)
+		if doIncremental && skipped > 0 {
+			fmt.Printf(" (skipped %d unchanged)", skipped)
+		}
+		fmt.Println()
 	}
 	return nil
 }
@@ -571,7 +799,7 @@ func backupMacOSDefaults(tempDir string, meta *metadata.Metadata) error {
 	return nil
 }
 
-func backupShellHistory(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver) error {
+func backupShellHistory(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver, incrMgr *incremental.Manager, doIncremental bool) error {
 	homeDir, _ := os.UserHomeDir()
 	historyDir := filepath.Join(tempDir, "shell-history")
 
@@ -582,9 +810,19 @@ func backupShellHistory(tempDir string, meta *metadata.Metadata, arch *archiver.
 	}
 
 	count := 0
+	skipped := 0
 	for _, histFile := range historyFiles {
 		srcPath := filepath.Join(homeDir, histFile)
 		if _, err := os.Stat(srcPath); err != nil {
+			continue
+		}
+
+		// Skip unchanged files in incremental mode
+		if !shouldBackupFile(incrMgr, doIncremental, srcPath) {
+			if backupVerbose {
+				fmt.Printf("  ⏭  Skipping unchanged: %s\n", histFile)
+			}
+			skipped++
 			continue
 		}
 
@@ -624,7 +862,7 @@ func backupShellHistory(tempDir string, meta *metadata.Metadata, arch *archiver.
 	return nil
 }
 
-func backupBrowserData(tempDir string, meta *metadata.Metadata) error {
+func backupBrowserData(tempDir string, meta *metadata.Metadata, incrMgr *incremental.Manager, doIncremental bool) error {
 	browserDir := filepath.Join(tempDir, "browser-data")
 	bm := browser.NewBrowserManager(browserDir)
 
@@ -744,6 +982,68 @@ func backupFonts(tempDir string, meta *metadata.Metadata) error {
 	})
 	if backupVerbose {
 		fmt.Printf("  ✓ Backed up %d custom fonts\n", count)
+	}
+
+	return nil
+}
+
+func backupDocker(tempDir string, meta *metadata.Metadata, cfg *config.Config) error {
+	dockerDir := filepath.Join(tempDir, "docker")
+
+	dockerMgr := docker.NewDockerManager(dockerDir, cfg.SearchPaths)
+
+	if backupDryRun {
+		if backupVerbose {
+			fmt.Println("  [DRY RUN] Would backup Docker configuration")
+		}
+		return nil
+	}
+
+	count, err := dockerMgr.BackupAll()
+	if err != nil {
+		if backupVerbose {
+			fmt.Printf("  ⚠️  Docker backup: %v\n", err)
+		}
+		return nil // Don't fail backup if Docker isn't configured
+	}
+
+	if count > 0 {
+		meta.SetPackageCount("docker-config", count)
+	}
+
+	if backupVerbose {
+		fmt.Printf("  ✓ Backed up Docker configuration (%d files)\n", count)
+	}
+
+	return nil
+}
+
+func backupKubernetes(tempDir string, meta *metadata.Metadata) error {
+	k8sDir := filepath.Join(tempDir, "kubernetes")
+
+	k8sMgr := kubernetes.NewKubernetesManager(k8sDir)
+
+	if backupDryRun {
+		if backupVerbose {
+			fmt.Println("  [DRY RUN] Would backup Kubernetes configuration")
+		}
+		return nil
+	}
+
+	count, err := k8sMgr.BackupAll()
+	if err != nil {
+		if backupVerbose {
+			fmt.Printf("  ⚠️  Kubernetes backup: %v\n", err)
+		}
+		return nil // Don't fail backup if Kubernetes isn't configured
+	}
+
+	if count > 0 {
+		meta.SetPackageCount("kubernetes-config", count)
+	}
+
+	if backupVerbose {
+		fmt.Printf("  ✓ Backed up Kubernetes configuration (%d files)\n", count)
 	}
 
 	return nil

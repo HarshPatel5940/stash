@@ -8,12 +8,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type IncrementalConfig struct {
+	Enabled            bool   `yaml:"enabled" mapstructure:"enabled"`
+	FullBackupInterval string `yaml:"full_backup_interval" mapstructure:"full_backup_interval"` // e.g., "7d"
+	AutoMergeThreshold int    `yaml:"auto_merge_threshold" mapstructure:"auto_merge_threshold"`
+}
+
 type Config struct {
-	SearchPaths        []string `yaml:"search_paths" mapstructure:"search_paths"`
-	Exclude            []string `yaml:"exclude" mapstructure:"exclude"`
-	AdditionalDotfiles []string `yaml:"additional_dotfiles" mapstructure:"additional_dotfiles"`
-	BackupDir          string   `yaml:"backup_dir" mapstructure:"backup_dir"`
-	EncryptionKey      string   `yaml:"encryption_key" mapstructure:"encryption_key"`
+	SearchPaths        []string           `yaml:"search_paths" mapstructure:"search_paths"`
+	Exclude            []string           `yaml:"exclude" mapstructure:"exclude"`
+	AdditionalDotfiles []string           `yaml:"additional_dotfiles" mapstructure:"additional_dotfiles"`
+	BackupDir          string             `yaml:"backup_dir" mapstructure:"backup_dir"`
+	EncryptionKey      string             `yaml:"encryption_key" mapstructure:"encryption_key"`
+	Incremental        *IncrementalConfig `yaml:"incremental,omitempty" mapstructure:"incremental"`
 }
 
 func DefaultConfig() *Config {
@@ -35,6 +42,11 @@ func DefaultConfig() *Config {
 		AdditionalDotfiles: []string{},
 		BackupDir:          filepath.Join(homeDir, "stash-backups"),
 		EncryptionKey:      filepath.Join(homeDir, ".stash.key"),
+		Incremental: &IncrementalConfig{
+			Enabled:            false, // Opt-in feature
+			FullBackupInterval: "7d",  // Force full backup every 7 days
+			AutoMergeThreshold: 5,     // Merge after 5 incrementals
+		},
 	}
 }
 

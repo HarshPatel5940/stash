@@ -1,3 +1,9 @@
+// Package metadata handles backup manifest creation and management.
+// It tracks all files included in a backup along with their properties
+// (size, permissions, checksums), package manager counts, timing statistics,
+// and backup type information for incremental backup support.
+//
+// The metadata is stored as metadata.json within each backup archive.
 package metadata
 
 import (
@@ -24,15 +30,29 @@ type FileInfo struct {
 	IsDir        bool        `json:"is_dir"`
 }
 
+type CategoryTiming struct {
+	Name      string        `json:"name"`
+	FileCount int           `json:"file_count"`
+	TotalSize int64         `json:"total_size"`
+	Duration  time.Duration `json:"duration"`
+}
+
 type Metadata struct {
-	Version       string         `json:"version"`
-	Timestamp     time.Time      `json:"timestamp"`
-	Hostname      string         `json:"hostname"`
-	Username      string         `json:"username"`
-	Files         []FileInfo     `json:"files"`
-	PackageCounts map[string]int `json:"package_counts"`
-	BackupSize    int64          `json:"backup_size"`
-	mu            sync.Mutex
+	Version          string                     `json:"version"`
+	Timestamp        time.Time                  `json:"timestamp"`
+	Hostname         string                     `json:"hostname"`
+	Username         string                     `json:"username"`
+	Files            []FileInfo                 `json:"files"`
+	PackageCounts    map[string]int             `json:"package_counts"`
+	BackupSize       int64                      `json:"backup_size"`
+	CompressedSize   int64                      `json:"compressed_size,omitempty"`
+	EncryptedSize    int64                      `json:"encrypted_size,omitempty"`
+	TotalDuration    time.Duration              `json:"total_duration,omitempty"`
+	Categories       map[string]*CategoryTiming `json:"categories,omitempty"`
+	BackupType       string                     `json:"backup_type,omitempty"`        // "full" or "incremental"
+	BaseBackup       string                     `json:"base_backup,omitempty"`        // reference to full backup
+	ChangedFilesOnly bool                       `json:"changed_files_only,omitempty"` // true for incremental
+	mu               sync.Mutex
 }
 
 func New() *Metadata {
@@ -46,6 +66,7 @@ func New() *Metadata {
 		Username:      username,
 		Files:         []FileInfo{},
 		PackageCounts: make(map[string]int),
+		Categories:    make(map[string]*CategoryTiming),
 		BackupSize:    0,
 	}
 }
@@ -202,4 +223,127 @@ func FormatSize(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// AddCategoryTiming records timing and statistics for a backup category
+func (m *Metadata) AddCategoryTiming(name string, fileCount int, totalSize int64, duration time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.Categories[name] = &CategoryTiming{
+		Name:      name,
+		FileCount: fileCount,
+		TotalSize: totalSize,
+		Duration:  duration,
+	}
+}
+
+// SetCompressedSize records the compressed archive size
+func (m *Metadata) SetCompressedSize(size int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.CompressedSize = size
+}
+
+// SetEncryptedSize records the final encrypted size
+func (m *Metadata) SetEncryptedSize(size int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.EncryptedSize = size
+}
+
+// SetTotalDuration records the total backup duration
+func (m *Metadata) SetTotalDuration(duration time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.TotalDuration = duration
+}
+
+// GetLargestFiles returns the N largest files in the backup
+func (m *Metadata) GetLargestFiles(n int) []FileInfo {
+	files := make([]FileInfo, len(m.Files))
+	copy(files, m.Files)
+
+	// Sort by size descending
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Size > files[j].Size
+	})
+
+	if len(files) > n {
+		return files[:n]
+	}
+	return files
+}
+
+// GetCompressionRatio returns the compression ratio as a percentage
+func (m *Metadata) GetCompressionRatio() float64 {
+	if m.BackupSize == 0 {
+		return 0
+	}
+	return (1.0 - float64(m.CompressedSize)/float64(m.BackupSize)) * 100
+}
+
+// GetFileCount returns total number of non-directory files
+func (m *Metadata) GetFileCount() int {
+	count := 0
+	for _, f := range m.Files {
+		if !f.IsDir {
+			count++
+		}
+	}
+	return count
+}
+
+// GetCategoryStats returns statistics organized by category
+func (m *Metadata) GetCategoryStats() map[string]map[string]interface{} {
+	stats := make(map[string]map[string]interface{})
+
+	for name, cat := range m.Categories {
+		stats[name] = map[string]interface{}{
+			"files":    cat.FileCount,
+			"size":     cat.TotalSize,
+			"duration": formatDuration(cat.Duration),
+		}
+	}
+
+	return stats
+}
+
+// formatDuration formats a duration for display
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return d.Round(time.Millisecond).String()
+	}
+	return d.Round(time.Second).String()
+}
+
+// SetBackupType sets the backup type (full or incremental)
+func (m *Metadata) SetBackupType(backupType string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.BackupType = backupType
+}
+
+// SetBaseBackup sets the reference to the base full backup
+func (m *Metadata) SetBaseBackup(baseBackup string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.BaseBackup = baseBackup
+}
+
+// SetChangedFilesOnly marks this as an incremental backup
+func (m *Metadata) SetChangedFilesOnly(changedOnly bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ChangedFilesOnly = changedOnly
+}
+
+// IsIncremental returns true if this is an incremental backup
+func (m *Metadata) IsIncremental() bool {
+	return m.BackupType == "incremental"
+}
+
+// IsFull returns true if this is a full backup
+func (m *Metadata) IsFull() bool {
+	return m.BackupType == "full" || m.BackupType == ""
 }

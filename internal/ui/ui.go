@@ -1,3 +1,8 @@
+// Package ui provides terminal user interface utilities for stash.
+// It includes colored output, progress bars, spinners, and formatted
+// display of statistics, errors, and file changes.
+//
+// All output functions are designed to be user-friendly and informative.
 package ui
 
 import (
@@ -169,4 +174,140 @@ func PrintSummaryTable(items map[string]string) {
 		fmt.Printf("  %s:%s %s\n", Bold(key), padding, value)
 	}
 	PrintDivider()
+}
+
+// PrintCategoryProgress prints progress for a single category
+func PrintCategoryProgress(name string, filesDone, filesTotal int, bytesDone, bytesTotal int64) {
+	percentage := 0.0
+	if filesTotal > 0 {
+		percentage = (float64(filesDone) / float64(filesTotal)) * 100
+	}
+
+	fmt.Printf("  %s %s: %d/%d files (%.1f%%) - %s\n",
+		Info("▶"),
+		name,
+		filesDone,
+		filesTotal,
+		percentage,
+		FormatBytes(bytesDone),
+	)
+}
+
+// PrintStatistics prints detailed backup statistics
+func PrintStatistics(stats map[string]interface{}) {
+	fmt.Println()
+	PrintSectionHeader("📊", "BACKUP STATISTICS")
+	PrintDivider()
+
+	if categories, ok := stats["categories"].(map[string]map[string]interface{}); ok {
+		fmt.Println(Bold("  Category Breakdown:"))
+		for name, data := range categories {
+			files := data["files"].(int)
+			size := data["size"].(int64)
+			duration := data["duration"].(string)
+			fmt.Printf("    %-20s %4d files    %10s    (%s)\n",
+				name+":",
+				files,
+				FormatBytes(size),
+				duration,
+			)
+		}
+		fmt.Println()
+	}
+
+	if totalFiles, ok := stats["total_files"].(int); ok {
+		fmt.Printf("  %s %d\n", Bold("Total Files:"), totalFiles)
+	}
+
+	if originalSize, ok := stats["original_size"].(int64); ok {
+		fmt.Printf("  %s %s\n", Bold("Original Size:"), FormatBytes(originalSize))
+	}
+
+	if compressedSize, ok := stats["compressed_size"].(int64); ok {
+		originalSize := stats["original_size"].(int64)
+		reduction := 0.0
+		if originalSize > 0 {
+			reduction = (1.0 - float64(compressedSize)/float64(originalSize)) * 100
+		}
+		fmt.Printf("  %s %s (%.1f%% reduction)\n",
+			Bold("Compressed:"),
+			FormatBytes(compressedSize),
+			reduction,
+		)
+	}
+
+	if totalTime, ok := stats["total_time"].(string); ok {
+		fmt.Printf("  %s %s\n", Bold("Total Time:"), totalTime)
+	}
+
+	if largestFiles, ok := stats["largest_files"].([]map[string]interface{}); ok && len(largestFiles) > 0 {
+		fmt.Println()
+		fmt.Println(Bold("  Top 5 Largest Files:"))
+		for i, file := range largestFiles {
+			if i >= 5 {
+				break
+			}
+			path := file["path"].(string)
+			size := file["size"].(int64)
+			fmt.Printf("    %d. %-50s  %10s\n", i+1, truncatePath(path, 50), FormatBytes(size))
+		}
+	}
+
+	PrintDivider()
+}
+
+// truncatePath truncates a file path to fit within maxLen
+func truncatePath(path string, maxLen int) string {
+	if len(path) <= maxLen {
+		return path
+	}
+	return "..." + path[len(path)-maxLen+3:]
+}
+
+// PrintErrorWithSolution prints an error with a suggested solution
+func PrintErrorWithSolution(problem, solution, alternative string) {
+	fmt.Println()
+	PrintError("Backup failed: %s", problem)
+	fmt.Println()
+	if solution != "" {
+		fmt.Printf("📍 %s: %s\n", Bold("Problem"), problem)
+		fmt.Printf("🔧 %s: %s\n", Bold("Solution"), solution)
+	}
+	if alternative != "" {
+		fmt.Printf("💡 %s: %s\n", Bold("Alternative"), alternative)
+	}
+	fmt.Println()
+}
+
+// PrintComparisonHeader prints header for backup comparison
+func PrintComparisonHeader(oldBackup, newBackup string, oldSize, newSize int64) {
+	fmt.Println()
+	PrintSectionHeader("📊", "Comparing backups")
+	fmt.Printf("  Old: %s (%s)\n", oldBackup, FormatBytes(oldSize))
+	fmt.Printf("  New: %s (%s)\n", newBackup, FormatBytes(newSize))
+	fmt.Println()
+}
+
+// PrintFileChanges prints file changes in a diff
+func PrintFileChanges(added, removed, modified, unchanged int, addedSize, removedSize, modifiedSize int64) {
+	PrintSectionHeader("📁", "FILE CHANGES")
+	if added > 0 {
+		fmt.Printf("  %s %d files added     (+%s)\n", Success("+"), added, FormatBytes(addedSize))
+	}
+	if removed > 0 {
+		fmt.Printf("  %s %d files removed   (-%s)\n", Error("-"), removed, FormatBytes(removedSize))
+	}
+	if modified > 0 {
+		sizeChange := modifiedSize
+		sign := "+"
+		if sizeChange < 0 {
+			sign = "-"
+			sizeChange = -sizeChange
+		}
+		fmt.Printf("  %s %d files modified  (%s%s)\n", Warning("~"), modified, sign, FormatBytes(sizeChange))
+	}
+	if unchanged > 0 {
+		fmt.Printf("  %s %d files unchanged\n", Info("="), unchanged)
+	}
+	fmt.Println()
 }

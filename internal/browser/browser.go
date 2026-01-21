@@ -38,6 +38,46 @@ func (bm *BrowserManager) GetBrowsers() []BrowserInfo {
 			},
 		},
 		{
+			Name: "Brave",
+			Path: filepath.Join(homeDir, "Library/Application Support/BraveSoftware/Brave-Browser"),
+			FilesToBackup: []string{
+				"Default/Bookmarks",
+				"Default/Preferences",
+				"Default/Extensions",
+				"Local State",
+			},
+		},
+		{
+			Name: "Edge",
+			Path: filepath.Join(homeDir, "Library/Application Support/Microsoft Edge"),
+			FilesToBackup: []string{
+				"Default/Bookmarks",
+				"Default/Preferences",
+				"Default/Extensions",
+				"Local State",
+			},
+		},
+		{
+			Name: "Opera",
+			Path: filepath.Join(homeDir, "Library/Application Support/com.operasoftware.Opera"),
+			FilesToBackup: []string{
+				"Bookmarks",
+				"Preferences",
+				"Extensions",
+				"Local State",
+			},
+		},
+		{
+			Name: "Vivaldi",
+			Path: filepath.Join(homeDir, "Library/Application Support/Vivaldi"),
+			FilesToBackup: []string{
+				"Default/Bookmarks",
+				"Default/Preferences",
+				"Default/Extensions",
+				"Local State",
+			},
+		},
+		{
 			Name: "Firefox",
 			Path: filepath.Join(homeDir, "Library/Application Support/Firefox"),
 			FilesToBackup: []string{

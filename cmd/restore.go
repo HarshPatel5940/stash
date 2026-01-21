@@ -11,6 +11,7 @@ import (
 	"github.com/harshpatel5940/stash/internal/archiver"
 	"github.com/harshpatel5940/stash/internal/crypto"
 	"github.com/harshpatel5940/stash/internal/defaults"
+	"github.com/harshpatel5940/stash/internal/incremental"
 	"github.com/harshpatel5940/stash/internal/metadata"
 	"github.com/spf13/cobra"
 )
@@ -143,6 +144,59 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Backup created: %s\n", meta.Timestamp.Format("2006-01-02 15:04:05"))
 	fmt.Printf("  Hostname: %s\n", meta.Hostname)
 	fmt.Printf("  Username: %s\n", meta.Username)
+
+	// Check if this is an incremental backup
+	if meta.IsIncremental() {
+		fmt.Printf("  Backup type: Incremental (requires base backup)\n")
+		fmt.Printf("  Base backup: %s\n", meta.BaseBackup)
+
+		// Get the restore chain
+		chain, err := incremental.GetRestoreChain(backupFile)
+		if err != nil {
+			return fmt.Errorf("failed to resolve incremental backup chain: %w", err)
+		}
+
+		if err := chain.Validate(); err != nil {
+			return fmt.Errorf("backup chain validation failed: %w", err)
+		}
+
+		fmt.Printf("\n📚 Restore chain: %s\n", chain.Summary())
+
+		// Extract and merge all backups in the chain
+		fmt.Println("\n📦 Extracting backup chain...")
+
+		for i, backupPath := range chain.GetBackupsInOrder() {
+			fmt.Printf("  [%d/%d] Extracting %s...\n", i+1, chain.GetTotalBackups(), filepath.Base(backupPath))
+
+			// Decrypt if needed
+			var chainArchivePath string
+			if strings.HasSuffix(backupPath, ".age") {
+				encryptor := crypto.NewEncryptor(restoreDecryptKey)
+				chainArchivePath = filepath.Join(tempDir, fmt.Sprintf("backup-%d.tar.gz", i))
+				if err := encryptor.Decrypt(backupPath, chainArchivePath); err != nil {
+					return fmt.Errorf("failed to decrypt backup %s: %w", backupPath, err)
+				}
+			} else {
+				chainArchivePath = backupPath
+			}
+
+			// Extract to the same directory (later backups override earlier ones)
+			if err := arch.Extract(chainArchivePath, extractDir); err != nil {
+				return fmt.Errorf("failed to extract backup %s: %w", backupPath, err)
+			}
+		}
+
+		fmt.Println("  ✓ All backups in chain extracted and merged")
+
+		// Reload metadata from the final (incremental) backup
+		meta, err = metadata.Load(metadataPath)
+		if err != nil {
+			return fmt.Errorf("failed to reload metadata: %w", err)
+		}
+	} else {
+		fmt.Printf("  Backup type: Full\n")
+	}
+
 	fmt.Printf("  Files: %d\n", len(meta.Files))
 
 	packagesDir := filepath.Join(extractDir, "packages")
