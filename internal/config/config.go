@@ -14,6 +14,15 @@ type IncrementalConfig struct {
 	AutoMergeThreshold int    `yaml:"auto_merge_threshold" mapstructure:"auto_merge_threshold"`
 }
 
+type CloudConfig struct {
+	Enabled  bool   `yaml:"enabled" mapstructure:"enabled"`
+	Provider string `yaml:"provider" mapstructure:"provider"` // "s3" for S3-compatible storage
+	Bucket   string `yaml:"bucket" mapstructure:"bucket"`
+	Region   string `yaml:"region" mapstructure:"region"`
+	Endpoint string `yaml:"endpoint,omitempty" mapstructure:"endpoint"` // Custom endpoint for B2, R2, MinIO, etc.
+	Prefix   string `yaml:"prefix,omitempty" mapstructure:"prefix"`     // Path prefix for backups
+}
+
 type Config struct {
 	SearchPaths        []string           `yaml:"search_paths" mapstructure:"search_paths"`
 	Exclude            []string           `yaml:"exclude" mapstructure:"exclude"`
@@ -21,6 +30,7 @@ type Config struct {
 	BackupDir          string             `yaml:"backup_dir" mapstructure:"backup_dir"`
 	EncryptionKey      string             `yaml:"encryption_key" mapstructure:"encryption_key"`
 	Incremental        *IncrementalConfig `yaml:"incremental,omitempty" mapstructure:"incremental"`
+	Cloud              *CloudConfig       `yaml:"cloud,omitempty" mapstructure:"cloud"`
 }
 
 func DefaultConfig() *Config {
