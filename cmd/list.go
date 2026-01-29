@@ -8,9 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/harshpatel5940/stash/internal/backuputil"
 	"github.com/harshpatel5940/stash/internal/config"
 	"github.com/harshpatel5940/stash/internal/metadata"
 	"github.com/spf13/cobra"
+)
+
+var (
+	listDetails bool
 )
 
 var listCmd = &cobra.Command{
@@ -22,7 +27,7 @@ Shows backup details including:
   - Backup timestamp
   - File size
   - Encryption status
-  - Number of files backed up
+  - Number of files backed up (with --details)
 
 Use this to find which backup to restore.`,
 	RunE: runList,
@@ -30,6 +35,7 @@ Use this to find which backup to restore.`,
 
 func init() {
 	rootCmd.AddCommand(listCmd)
+	listCmd.Flags().BoolVarP(&listDetails, "details", "d", false, "Show detailed metadata (may be slow for many backups)")
 }
 
 type backupInfo struct {
@@ -103,6 +109,12 @@ func runList(cmd *cobra.Command, args []string) error {
 	fmt.Println(strings.Repeat("=", 70))
 	fmt.Printf("Total: %d backup(s) found\n", len(backups))
 	fmt.Println()
+
+	if !listDetails {
+		fmt.Println("💡 Use --details to show file and package counts (may be slow)")
+		fmt.Println()
+	}
+
 	fmt.Println("💡 To restore a backup:")
 	fmt.Printf("   stash restore %s\n", backups[0].Path)
 	fmt.Println()
@@ -145,8 +157,13 @@ func findBackups(backupDir string) ([]backupInfo, error) {
 			Encrypted: strings.HasSuffix(name, ".age"),
 		}
 
-		if strings.HasSuffix(name, ".tar.gz") && !strings.HasSuffix(name, ".age") {
-
+		// Load metadata if --details flag is set
+		if listDetails {
+			meta, err := readMetadataFromBackup(path)
+			if err == nil {
+				backup.Metadata = meta
+			}
+			// Silently continue if metadata can't be read
 		}
 
 		backups = append(backups, backup)
@@ -156,6 +173,6 @@ func findBackups(backupDir string) ([]backupInfo, error) {
 }
 
 func readMetadataFromBackup(backupPath string) (*metadata.Metadata, error) {
-
-	return nil, nil
+	// Use backuputil to extract metadata (handles both encrypted and unencrypted)
+	return backuputil.ExtractMetadata(backupPath, "")
 }
