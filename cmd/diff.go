@@ -12,6 +12,7 @@ import (
 var (
 	diffVerbose      bool
 	diffShowPackages bool
+	diffDecryptKey   string
 )
 
 var diffCmd = &cobra.Command{
@@ -36,6 +37,7 @@ func init() {
 	rootCmd.AddCommand(diffCmd)
 	diffCmd.Flags().BoolVarP(&diffVerbose, "verbose", "v", false, "Show detailed file-by-file changes")
 	diffCmd.Flags().BoolVar(&diffShowPackages, "packages", true, "Show package manager changes")
+	diffCmd.Flags().StringVarP(&diffDecryptKey, "decrypt-key", "k", "", "Path to decryption key (default: ~/.stash.key)")
 }
 
 func runDiff(cmd *cobra.Command, args []string) error {
@@ -48,13 +50,16 @@ func runDiff(cmd *cobra.Command, args []string) error {
 
 	ui.PrintSectionHeader("📊", "Comparing Backups")
 
-	// Perform the comparison
-	result, err := diff.Compare(oldBackup, newBackup)
+	// Perform the comparison with options
+	opts := diff.CompareOptions{
+		KeyPath: diffDecryptKey,
+	}
+	result, err := diff.CompareWithOptions(oldBackup, newBackup, opts)
 	if err != nil {
 		ui.PrintError("Failed to compare backups: %v", err)
 		fmt.Println()
-		ui.PrintInfo("Note: To compare encrypted backups, metadata must be accessible")
-		ui.PrintInfo("Consider saving metadata alongside backups for easier comparison")
+		ui.PrintInfo("Note: Ensure the decryption key is available at ~/.stash.key")
+		ui.PrintInfo("Or specify a custom key path with --decrypt-key")
 		return err
 	}
 

@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/harshpatel5940/stash/internal/backuputil"
 	"github.com/harshpatel5940/stash/internal/metadata"
 )
 
@@ -47,15 +48,25 @@ type PackageChange struct {
 	Delta    int
 }
 
+// CompareOptions contains options for comparing backups
+type CompareOptions struct {
+	KeyPath string // Path to decryption key (optional, defaults to ~/.stash.key)
+}
+
 // Compare compares two backups and returns the differences
 func Compare(oldBackupPath, newBackupPath string) (*BackupDiff, error) {
+	return CompareWithOptions(oldBackupPath, newBackupPath, CompareOptions{})
+}
+
+// CompareWithOptions compares two backups with custom options
+func CompareWithOptions(oldBackupPath, newBackupPath string, opts CompareOptions) (*BackupDiff, error) {
 	// Load metadata from both backups
-	oldMeta, err := loadBackupMetadata(oldBackupPath)
+	oldMeta, err := loadBackupMetadata(oldBackupPath, opts.KeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load old backup metadata: %w", err)
 	}
 
-	newMeta, err := loadBackupMetadata(newBackupPath)
+	newMeta, err := loadBackupMetadata(newBackupPath, opts.KeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load new backup metadata: %w", err)
 	}
@@ -174,24 +185,15 @@ func Compare(oldBackupPath, newBackupPath string) (*BackupDiff, error) {
 }
 
 // loadBackupMetadata loads metadata from a backup
-func loadBackupMetadata(backupPath string) (*metadata.Metadata, error) {
-	// For now, we'll need to extract and read the metadata
-	// This is a simplified version - in practice, you'd need to:
-	// 1. Decrypt the backup if encrypted
-	// 2. Extract the tar.gz
-	// 3. Read the metadata.json file
-
-	// For the MVP, we'll assume the metadata is accessible
-	// In a real implementation, this would use the archiver and crypto packages
-
-	// Try to find metadata file next to backup
+func loadBackupMetadata(backupPath string, keyPath string) (*metadata.Metadata, error) {
+	// First, try to find a sidecar metadata file (for backwards compatibility)
 	metadataPath := backupPath + ".metadata.json"
 	if _, err := os.Stat(metadataPath); err == nil {
 		return metadata.Load(metadataPath)
 	}
 
-	// If not found, would need to extract from backup
-	return nil, fmt.Errorf("metadata not found for backup: %s (would need to extract from encrypted archive)", backupPath)
+	// Extract metadata from the backup archive (handles both encrypted and unencrypted)
+	return backuputil.ExtractMetadata(backupPath, keyPath)
 }
 
 // GetAddedFilesCount returns the number of added files (excluding directories)
