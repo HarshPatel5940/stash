@@ -13,14 +13,17 @@ import (
 	"github.com/harshpatel5940/stash/internal/defaults"
 	"github.com/harshpatel5940/stash/internal/incremental"
 	"github.com/harshpatel5940/stash/internal/metadata"
+	"github.com/harshpatel5940/stash/internal/packager"
+	"github.com/harshpatel5940/stash/internal/tui"
 	"github.com/spf13/cobra"
 )
 
 var (
-	restoreDecryptKey  string
-	restoreDryRun      bool
-	restoreInteractive bool
-	restoreNoDecrypt   bool
+	restoreDecryptKey string
+	restoreDryRun     bool
+	restoreEditor     bool
+	restoreNoDecrypt  bool
+	restoreNoTUI      bool
 )
 
 type RestoreOptions struct {
@@ -41,8 +44,9 @@ var restoreCmd = &cobra.Command{
 The restore process:
   1. Decrypts the backup file (if encrypted)
   2. Extracts the archive
-  3. Interactive menu to select what to restore/install
-  4. Executes selected actions automatically:
+  3. Interactive multi-select menu to choose what to restore/install
+  4. Optional file-by-file selection
+  5. Executes selected actions automatically:
      - Restore files (dotfiles, SSH, GPG, configs)
      - Restore macOS system preferences
      - Install Homebrew packages
@@ -51,7 +55,8 @@ The restore process:
      - Install NPM global packages
 
 Use --dry-run to preview what would be restored without making changes.
-Use --interactive to pick/drop individual files in your editor (git-rebase style).`,
+Use --editor to pick/drop individual files in your editor (git-rebase style).
+Use --no-tui for simple Y/n prompts instead of interactive multi-select.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runRestore,
 }
@@ -60,8 +65,9 @@ func init() {
 	rootCmd.AddCommand(restoreCmd)
 	restoreCmd.Flags().StringVarP(&restoreDecryptKey, "decrypt-key", "k", "", "Path to decryption key (default: ~/.stash.key)")
 	restoreCmd.Flags().BoolVar(&restoreDryRun, "dry-run", false, "Preview what would be restored without making changes")
-	restoreCmd.Flags().BoolVar(&restoreInteractive, "interactive", false, "Ask before restoring each file")
+	restoreCmd.Flags().BoolVar(&restoreEditor, "editor", false, "Pick/drop individual files in your editor (git-rebase style)")
 	restoreCmd.Flags().BoolVar(&restoreNoDecrypt, "no-decrypt", false, "Backup is not encrypted")
+	restoreCmd.Flags().BoolVar(&restoreNoTUI, "no-tui", false, "Use simple Y/n prompts instead of interactive multi-select")
 }
 
 func runRestore(cmd *cobra.Command, args []string) error {
@@ -210,14 +216,41 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	hasShellHistory := fileExists(filepath.Join(extractDir, "shell-history"))
 
 	var options RestoreOptions
-	if !restoreDryRun && !restoreInteractive {
-		var err error
-		options, err = promptRestoreOptions(hasBrewfile, hasMAS, hasVSCode, hasNPM, hasMacOSDefaults, hasShellHistory)
-		if err != nil {
-			return fmt.Errorf("failed to get restore options: %w", err)
+	if !restoreDryRun {
+		available := tui.AvailableOptions{
+			HasBrewfile:      hasBrewfile,
+			HasMAS:           hasMAS,
+			HasVSCode:        hasVSCode,
+			HasNPM:           hasNPM,
+			HasMacOSDefaults: hasMacOSDefaults,
+			HasShellHistory:  hasShellHistory,
+		}
+
+		if restoreNoTUI {
+			// Use simple Y/n prompts
+			var err error
+			options, err = promptRestoreOptions(hasBrewfile, hasMAS, hasVSCode, hasNPM, hasMacOSDefaults, hasShellHistory)
+			if err != nil {
+				return fmt.Errorf("failed to get restore options: %w", err)
+			}
+		} else {
+			// Use TUI multi-select
+			tuiOpts, err := tui.RestoreOptionsForm(available)
+			if err != nil {
+				return fmt.Errorf("failed to get restore options: %w", err)
+			}
+			options = RestoreOptions{
+				RestoreFiles:         tuiOpts.RestoreFiles,
+				RestoreMacOSDefaults: tuiOpts.RestoreMacOSDefaults,
+				InstallHomebrew:      tuiOpts.InstallHomebrew,
+				InstallMAS:           tuiOpts.InstallMAS,
+				InstallVSCode:        tuiOpts.InstallVSCode,
+				InstallNPM:           tuiOpts.InstallNPM,
+				RestoreShellHistory:  tuiOpts.RestoreShellHistory,
+			}
 		}
 	} else {
-
+		// Dry run - use default options
 		options = RestoreOptions{
 			RestoreFiles:         true,
 			RestoreMacOSDefaults: hasMacOSDefaults,
@@ -264,7 +297,8 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	}
 
 	filesToRestore := meta.Files
-	if restoreInteractive {
+	if restoreEditor {
+		// Use editor-based pick/drop selection
 		selected, err := interactivePickFiles(meta.Files, tempDir)
 		if err != nil {
 			return fmt.Errorf("interactive selection failed: %w", err)
@@ -275,6 +309,20 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		}
 		filesToRestore = selected
 		fmt.Printf("\n✓ Selected %d files to restore\n", len(filesToRestore))
+	} else if !restoreNoTUI && !restoreDryRun {
+		// Use TUI multi-select for file selection (only for smaller backups)
+		if len(meta.Files) <= 100 {
+			selected, err := tui.FilePickerForm(meta.Files)
+			if err != nil {
+				return fmt.Errorf("file selection failed: %w", err)
+			}
+			if len(selected) == 0 {
+				fmt.Println("No files selected. Restore cancelled.")
+				return nil
+			}
+			filesToRestore = selected
+			fmt.Printf("\n✓ Selected %d files to restore\n", len(filesToRestore))
+		}
 	}
 
 	fmt.Println("\n" + strings.Repeat("=", 50))
@@ -361,9 +409,12 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Create installer with progress bars
+	installer := packager.NewInstaller(false)
+
 	if options.InstallHomebrew && fileExists(filepath.Join(persistentPackagesDir, "Brewfile")) {
 		fmt.Println("\n🍺 Installing Homebrew packages...")
-		if err := runCommand("brew", "bundle", "--file="+filepath.Join(persistentPackagesDir, "Brewfile")); err != nil {
+		if err := installer.InstallBrewPackages(filepath.Join(persistentPackagesDir, "Brewfile")); err != nil {
 			fmt.Printf("  ⚠️  Failed to install Homebrew packages: %v\n", err)
 			fmt.Println("  💡 Run manually: brew bundle --file=" + filepath.Join(persistentPackagesDir, "Brewfile"))
 		} else {
@@ -373,63 +424,28 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 	if options.InstallMAS && fileExists(filepath.Join(persistentPackagesDir, "mas-apps.txt")) {
 		fmt.Println("\n🏪 Installing Mac App Store apps...")
-		if !commandExists("mas") {
-			fmt.Println("  ⚠️  'mas' not installed. Install with: brew install mas")
+		installed, err := installer.InstallMASApps(filepath.Join(persistentPackagesDir, "mas-apps.txt"))
+		if err != nil {
+			fmt.Printf("  ⚠️  %v\n", err)
 		} else {
-			masFile := filepath.Join(persistentPackagesDir, "mas-apps.txt")
-			content, _ := os.ReadFile(masFile)
-			lines := strings.Split(string(content), "\n")
-			installed := 0
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-				parts := strings.Fields(line)
-				if len(parts) >= 1 {
-					appID := parts[0]
-					if err := runCommand("mas", "install", appID); err != nil {
-						fmt.Printf("  ⚠️  Failed to install app %s\n", appID)
-					} else {
-						installed++
-					}
-				}
-			}
 			fmt.Printf("  ✓ Installed %d Mac App Store apps\n", installed)
 		}
 	}
 
 	if options.InstallVSCode && fileExists(filepath.Join(persistentPackagesDir, "vscode-extensions.txt")) {
 		fmt.Println("\n💻 Installing VS Code extensions...")
-		if !commandExists("code") {
-			fmt.Println("  ⚠️  'code' command not found. Install VS Code first.")
+		installed, err := installer.InstallVSCodeExtensions(filepath.Join(persistentPackagesDir, "vscode-extensions.txt"))
+		if err != nil {
+			fmt.Printf("  ⚠️  %v\n", err)
 		} else {
-			vscodeFile := filepath.Join(persistentPackagesDir, "vscode-extensions.txt")
-			content, _ := os.ReadFile(vscodeFile)
-			lines := strings.Split(string(content), "\n")
-			installed := 0
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-				if err := runCommand("code", "--install-extension", line); err != nil {
-					fmt.Printf("  ⚠️  Failed to install extension %s\n", line)
-				} else {
-					installed++
-				}
-			}
 			fmt.Printf("  ✓ Installed %d VS Code extensions\n", installed)
 		}
 	}
 
 	if options.InstallNPM && fileExists(filepath.Join(persistentPackagesDir, "npm-global.txt")) {
-		fmt.Println("\n📦 Installing NPM global packages...")
-		if !commandExists("npm") {
-			fmt.Println("  ⚠️  'npm' not found. Install Node.js first.")
-		} else {
-			fmt.Println("  ℹ️  NPM package list available at: " + filepath.Join(persistentPackagesDir, "npm-global.txt"))
-			fmt.Println("  💡 Review and install manually as needed")
+		fmt.Println("\n📦 NPM global packages...")
+		if err := installer.InstallNPMPackages(filepath.Join(persistentPackagesDir, "npm-global.txt")); err != nil {
+			fmt.Printf("  ⚠️  %v\n", err)
 		}
 	}
 
