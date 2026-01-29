@@ -25,6 +25,8 @@ type GitTracker struct {
 	outputDir string
 	repos     []GitRepo
 	seenPaths map[string]bool
+	maxDepth  int
+	skipDirs  map[string]bool
 }
 
 func NewGitTracker(outputDir string) *GitTracker {
@@ -32,13 +34,44 @@ func NewGitTracker(outputDir string) *GitTracker {
 		outputDir: outputDir,
 		repos:     []GitRepo{},
 		seenPaths: make(map[string]bool),
+		maxDepth:  5,
+		skipDirs:  defaultSkipDirs(),
+	}
+}
+
+// NewGitTrackerWithConfig creates a GitTracker with custom config
+func NewGitTrackerWithConfig(outputDir string, maxDepth int, skipDirs []string) *GitTracker {
+	gt := &GitTracker{
+		outputDir: outputDir,
+		repos:     []GitRepo{},
+		seenPaths: make(map[string]bool),
+		maxDepth:  maxDepth,
+		skipDirs:  make(map[string]bool),
+	}
+	for _, dir := range skipDirs {
+		gt.skipDirs[dir] = true
+	}
+	return gt
+}
+
+func defaultSkipDirs() map[string]bool {
+	return map[string]bool{
+		"node_modules": true,
+		".npm":         true,
+		".cache":       true,
+		"vendor":       true,
+		"venv":         true,
+		".venv":        true,
+		"dist":         true,
+		"build":        true,
+		"Library":      true,
+		"Applications": true,
 	}
 }
 
 func (gt *GitTracker) ScanDirectories(searchDirs []string) error {
 	for _, dir := range searchDirs {
-		if err := gt.scanDir(dir, 0, 5); err != nil {
-
+		if err := gt.scanDir(dir, 0, gt.maxDepth); err != nil {
 			continue
 		}
 	}
@@ -75,20 +108,7 @@ func (gt *GitTracker) scanDir(dir string, depth, maxDepth int) error {
 			continue
 		}
 
-		skipDirs := map[string]bool{
-			"node_modules": true,
-			".npm":         true,
-			".cache":       true,
-			"vendor":       true,
-			"venv":         true,
-			".venv":        true,
-			"dist":         true,
-			"build":        true,
-			"Library":      true,
-			"Applications": true,
-		}
-
-		if skipDirs[entry.Name()] {
+		if gt.skipDirs[entry.Name()] {
 			continue
 		}
 

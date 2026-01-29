@@ -8,10 +8,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/harshpatel5940/stash/internal/config"
 )
 
 type DefaultsManager struct {
 	outputDir string
+	cfg       *config.Config
 }
 
 type DefaultsDomain struct {
@@ -20,45 +23,32 @@ type DefaultsDomain struct {
 }
 
 func NewDefaultsManager(outputDir string) *DefaultsManager {
+	return NewDefaultsManagerWithConfig(outputDir, nil)
+}
+
+func NewDefaultsManagerWithConfig(outputDir string, cfg *config.Config) *DefaultsManager {
+	if cfg == nil {
+		cfg, _ = config.Load()
+		if cfg == nil {
+			cfg = config.DefaultConfig()
+		}
+	}
 	return &DefaultsManager{
 		outputDir: outputDir,
+		cfg:       cfg,
 	}
 }
 
 func (d *DefaultsManager) ImportantDomains() []string {
-	return []string{
-
-		"com.apple.dock",
-
-		"com.apple.finder",
-
-		"NSGlobalDomain",
-
-		"com.apple.HIToolbox",
-
-		"com.apple.AppleMultitouchTrackpad",
-		"com.apple.driver.AppleBluetoothMultitouch.trackpad",
-
-		"com.apple.screencapture",
-
-		"com.apple.Safari",
-
-		"com.apple.menuextra.clock",
-		"com.apple.systemuiserver",
-
-		"com.apple.spaces",
-
-		"com.apple.TextEdit",
-
-		"com.apple.Terminal",
-
-		"com.apple.ActivityMonitor",
-
-		"com.apple.TimeMachine",
-	}
+	return d.cfg.GetMacOSDefaultsDomains()
 }
 
 func (d *DefaultsManager) BackupAll() error {
+	// Check if macOS defaults backup is enabled
+	if !d.cfg.IsMacOSDefaultsEnabled() {
+		return nil
+	}
+
 	if err := os.MkdirAll(d.outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}

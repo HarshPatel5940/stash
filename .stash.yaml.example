@@ -1,0 +1,155 @@
+# Stash Configuration File
+# This file controls all aspects of backup and restore behavior
+# Location: ~/.stash.yaml
+
+# Directories to search for .env and .pem files
+search_paths:
+  - ~/projects
+  - ~/work
+  - ~/Documents
+
+# Patterns to exclude from backups
+exclude:
+  - "*/node_modules/*"
+  - "*/vendor/*"
+  - "*/.git/*"
+  - "*/.next/*"
+  - "*/dist/*"
+  - "*/build/*"
+
+# Additional dotfiles to include beyond the common ones
+# Common dotfiles (.zshrc, .bashrc, .gitconfig) are always included
+additional_dotfiles: []
+  # - .custom_aliases
+  # - .local_config
+
+# Backup storage location
+backup_dir: ~/stash-backups
+
+# Encryption key location
+encryption_key: ~/.stash.key
+
+# Incremental backup settings
+incremental:
+  enabled: false
+  full_backup_interval: 7d      # Create full backup every 7 days
+  auto_merge_threshold: 5        # Auto-merge when 5+ incrementals exist
+
+# Cloud sync settings (optional)
+cloud:
+  enabled: false
+  provider: s3                   # s3, backblaze-b2, r2, minio
+  bucket: my-stash-backups
+  region: us-west-2
+  # endpoint: https://s3.us-west-2.amazonaws.com  # Optional for S3-compatible
+  # prefix: backups/                               # Optional path prefix
+
+# Backup retention and cleanup
+backup:
+  keep_count: 5                  # Keep only last 5 backups
+  auto_cleanup: true             # Automatically delete old backups
+
+# Dotfiles scanning configuration
+dotfiles:
+  # Additional dotfiles beyond the defaults
+  additional: []
+  
+  # Directories to ignore when scanning home directory
+  ignored_dirs:
+    - .cache
+    - .local
+    - .npm
+    - .node_modules
+    - .vscode
+    - .Trash
+    - .DS_Store
+    - .docker
+    - .gem
+    - .cargo
+    - .rustup
+    - .gradle
+    - .m2
+    - .android
+
+# Secret directories to backup
+# These are backed up separately from regular dotfiles
+secrets:
+  directories:
+    - .ssh
+    - .gnupg
+    - .aws
+    # - .kube        # Add Kubernetes configs
+    # - .docker      # Add Docker credentials
+
+# Shell history files to backup
+shell_history:
+  files:
+    - .zsh_history
+    - .bash_history
+    - .zhistory
+    # - .fish_history  # Add fish shell history
+
+# Git repository scanning
+git:
+  # Directories to search for git repositories
+  search_dirs:
+    - ~/Documents
+    - ~/Projects
+    - ~/Code
+    - ~/Dev
+    - ~/workspace
+    - ~/github
+  
+  # Maximum directory depth to scan
+  max_depth: 5
+  
+  # Directories to skip during scanning
+  skip_dirs:
+    - node_modules
+    - .npm
+    - .cache
+    - vendor
+    - venv
+    - .venv
+    - dist
+    - build
+    - Library
+    - Applications
+
+# macOS system defaults/preferences
+macos_defaults:
+  enabled: true
+  
+  # Preference domains to backup
+  # These control system settings like Dock, Finder, trackpad, etc.
+  domains:
+    - com.apple.dock
+    - com.apple.finder
+    - NSGlobalDomain
+    - com.apple.HIToolbox
+    - com.apple.AppleMultitouchTrackpad
+    - com.apple.screencapture
+    - com.apple.Safari
+    - com.apple.menuextra.clock
+    - com.apple.systemuiserver
+    - com.apple.spaces
+    - com.apple.TextEdit
+    - com.apple.Terminal
+    - com.apple.ActivityMonitor
+    - com.apple.TimeMachine
+
+# Browser data backup
+browsers:
+  enabled: true
+  # Empty include list means all supported browsers (Chrome, Firefox, Safari, Arc)
+  # Specify browsers to limit: ["chrome", "firefox"]
+  include: []
+
+# Restore behavior
+restore:
+  use_tui: true                  # Use interactive TUI for file selection
+  file_picker_threshold: 100     # Use TUI only if file count <= this number
+
+# Diff display settings
+diff:
+  display_limit: 10              # Number of files to show in diff output

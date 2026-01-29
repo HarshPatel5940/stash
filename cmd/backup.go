@@ -203,13 +203,13 @@ func runBackup(cmd *cobra.Command, args []string) error {
 
 	tasks := []backupTask{
 		{"Dotfiles", func() error { return backupDotfiles(tempDir, meta, arch, cfg, incrMgr, doIncrementalBackup) }},
-		{"Secrets", func() error { return backupSecrets(tempDir, meta, arch, incrMgr, doIncrementalBackup) }},
+		{"Secrets", func() error { return backupSecrets(tempDir, meta, arch, incrMgr, doIncrementalBackup, cfg) }},
 		{"EnvFiles", func() error { return backupEnvFiles(tempDir, meta, arch, cfg, incrMgr, doIncrementalBackup) }},
 		{"PemFiles", func() error { return backupPemFiles(tempDir, meta, arch, cfg, incrMgr, doIncrementalBackup) }},
 		{"Packages", func() error { return backupPackages(tempDir, meta) }},
-		{"MacOSDefaults", func() error { return backupMacOSDefaults(tempDir, meta) }},
-		{"ShellHistory", func() error { return backupShellHistory(tempDir, meta, arch, incrMgr, doIncrementalBackup) }},
-		{"GitRepos", func() error { return backupGitRepos(tempDir, meta) }},
+		{"MacOSDefaults", func() error { return backupMacOSDefaults(tempDir, meta, cfg) }},
+		{"ShellHistory", func() error { return backupShellHistory(tempDir, meta, arch, incrMgr, doIncrementalBackup, cfg) }},
+		{"GitRepos", func() error { return backupGitRepos(tempDir, meta, cfg) }},
 		{"Fonts", func() error { return backupFonts(tempDir, meta) }},
 		{"Docker", func() error { return backupDocker(tempDir, meta, cfg) }},
 		{"Kubernetes", func() error { return backupKubernetes(tempDir, meta) }},
@@ -496,7 +496,7 @@ func shouldBackupFile(incrMgr *incremental.Manager, doIncremental bool, filePath
 }
 
 func backupDotfiles(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver, cfg *config.Config, incrMgr *incremental.Manager, doIncremental bool) error {
-	dotfilesFinder, err := finder.NewDotfilesFinder()
+	dotfilesFinder, err := finder.NewDotfilesFinderWithConfig(cfg)
 	if err != nil {
 		return err
 	}
@@ -574,8 +574,8 @@ func backupDotfiles(tempDir string, meta *metadata.Metadata, arch *archiver.Arch
 	return nil
 }
 
-func backupSecrets(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver, incrMgr *incremental.Manager, doIncremental bool) error {
-	dotfilesFinder, err := finder.NewDotfilesFinder()
+func backupSecrets(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver, incrMgr *incremental.Manager, doIncremental bool, cfg *config.Config) error {
+	dotfilesFinder, err := finder.NewDotfilesFinderWithConfig(cfg)
 	if err != nil {
 		return err
 	}
@@ -767,9 +767,9 @@ func backupPackages(tempDir string, meta *metadata.Metadata) error {
 	return nil
 }
 
-func backupMacOSDefaults(tempDir string, meta *metadata.Metadata) error {
+func backupMacOSDefaults(tempDir string, meta *metadata.Metadata, cfg *config.Config) error {
 	defaultsDir := filepath.Join(tempDir, "macos-defaults")
-	dm := defaults.NewDefaultsManager(defaultsDir)
+	dm := defaults.NewDefaultsManagerWithConfig(defaultsDir, cfg)
 
 	if backupDryRun {
 		domains := dm.ImportantDomains()
@@ -799,15 +799,11 @@ func backupMacOSDefaults(tempDir string, meta *metadata.Metadata) error {
 	return nil
 }
 
-func backupShellHistory(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver, incrMgr *incremental.Manager, doIncremental bool) error {
+func backupShellHistory(tempDir string, meta *metadata.Metadata, arch *archiver.Archiver, incrMgr *incremental.Manager, doIncremental bool, cfg *config.Config) error {
 	homeDir, _ := os.UserHomeDir()
 	historyDir := filepath.Join(tempDir, "shell-history")
 
-	historyFiles := []string{
-		".zsh_history",
-		".bash_history",
-		".zhistory",
-	}
+	historyFiles := cfg.GetShellHistoryFiles()
 
 	count := 0
 	skipped := 0
@@ -899,19 +895,15 @@ func backupBrowserData(tempDir string, meta *metadata.Metadata, incrMgr *increme
 	return nil
 }
 
-func backupGitRepos(tempDir string, meta *metadata.Metadata) error {
+func backupGitRepos(tempDir string, meta *metadata.Metadata, cfg *config.Config) error {
 	gitDir := filepath.Join(tempDir, "git-repos")
-	gt := gittracker.NewGitTracker(gitDir)
+	gt := gittracker.NewGitTrackerWithConfig(
+		gitDir,
+		cfg.GetGitMaxDepth(),
+		cfg.GetGitSkipDirs(),
+	)
 
-	homeDir, _ := os.UserHomeDir()
-	searchDirs := []string{
-		filepath.Join(homeDir, "Documents"),
-		filepath.Join(homeDir, "Projects"),
-		filepath.Join(homeDir, "Code"),
-		filepath.Join(homeDir, "Dev"),
-		filepath.Join(homeDir, "workspace"),
-		filepath.Join(homeDir, "github"),
-	}
+	searchDirs := cfg.GetGitSearchDirs()
 
 	if backupDryRun {
 		if backupVerbose {

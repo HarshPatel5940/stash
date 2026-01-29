@@ -4,20 +4,44 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/harshpatel5940/stash/internal/config"
 )
 
 type DotfilesFinder struct {
-	homeDir string
+	homeDir    string
+	cfg        *config.Config
+	ignoredMap map[string]bool
 }
 
 func NewDotfilesFinder() (*DotfilesFinder, error) {
+	return NewDotfilesFinderWithConfig(nil)
+}
+
+func NewDotfilesFinderWithConfig(cfg *config.Config) (*DotfilesFinder, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
 
+	if cfg == nil {
+		cfg, _ = config.Load()
+		if cfg == nil {
+			cfg = config.DefaultConfig()
+		}
+	}
+
+	// Build ignored dirs map
+	ignoredDirs := cfg.GetDotfilesIgnoredDirs()
+	ignoredMap := make(map[string]bool, len(ignoredDirs))
+	for _, dir := range ignoredDirs {
+		ignoredMap[dir] = true
+	}
+
 	return &DotfilesFinder{
-		homeDir: homeDir,
+		homeDir:    homeDir,
+		cfg:        cfg,
+		ignoredMap: ignoredMap,
 	}, nil
 }
 
@@ -68,11 +92,25 @@ func (df *DotfilesFinder) Find(additional []string) ([]string, error) {
 			continue
 		}
 
-		if name == ".config" || name == ".ssh" || name == ".gnupg" || name == ".aws" {
+		// Skip .config and secret directories (they're handled separately)
+		if name == ".config" {
 			continue
 		}
 
-		if isIgnoredDir(name) {
+		// Skip secret directories
+		secretDirs := df.cfg.GetSecretDirs()
+		isSecret := false
+		for _, secretDir := range secretDirs {
+			if name == secretDir {
+				isSecret = true
+				break
+			}
+		}
+		if isSecret {
+			continue
+		}
+
+		if df.isIgnoredDir(name) {
 			continue
 		}
 
@@ -99,49 +137,26 @@ func (df *DotfilesFinder) FindConfigDir() (string, bool) {
 func (df *DotfilesFinder) FindSecretDirs() map[string]string {
 	secrets := make(map[string]string)
 
-	sshDir := filepath.Join(df.homeDir, ".ssh")
-	if dirExists(sshDir) {
-		secrets["ssh"] = sshDir
-	}
+	secretDirs := df.cfg.GetSecretDirs()
 
-	gpgDir := filepath.Join(df.homeDir, ".gnupg")
-	if dirExists(gpgDir) {
-		secrets["gpg"] = gpgDir
-	}
-
-	awsDir := filepath.Join(df.homeDir, ".aws")
-	if dirExists(awsDir) {
-		secrets["aws"] = awsDir
+	for _, dirName := range secretDirs {
+		dirPath := filepath.Join(df.homeDir, dirName)
+		if dirExists(dirPath) {
+			// Use the directory name without the leading dot as the key
+			key := strings.TrimPrefix(dirName, ".")
+			// Maintain backward compatibility: .gnupg -> gpg
+			if key == "gnupg" {
+				key = "gpg"
+			}
+			secrets[key] = dirPath
+		}
 	}
 
 	return secrets
 }
 
-func isIgnoredDir(name string) bool {
-	ignored := []string{
-		".cache",
-		".local",
-		".npm",
-		".node_modules",
-		".vscode",
-		".Trash",
-		".DS_Store",
-		".docker",
-		".gem",
-		".cargo",
-		".rustup",
-		".gradle",
-		".m2",
-		".android",
-		".minecraft",
-	}
-
-	for _, ig := range ignored {
-		if name == ig {
-			return true
-		}
-	}
-	return false
+func (df *DotfilesFinder) isIgnoredDir(name string) bool {
+	return df.ignoredMap[name]
 }
 
 func fileExists(path string) bool {

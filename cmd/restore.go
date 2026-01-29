@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/harshpatel5940/stash/internal/archiver"
+	"github.com/harshpatel5940/stash/internal/config"
 	"github.com/harshpatel5940/stash/internal/crypto"
 	"github.com/harshpatel5940/stash/internal/defaults"
 	"github.com/harshpatel5940/stash/internal/incremental"
@@ -72,6 +73,12 @@ func init() {
 
 func runRestore(cmd *cobra.Command, args []string) error {
 	backupFile := args[0]
+
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
 
 	if _, err := os.Stat(backupFile); os.IsNotExist(err) {
 
@@ -311,7 +318,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\n✓ Selected %d files to restore\n", len(filesToRestore))
 	} else if !restoreNoTUI && !restoreDryRun {
 		// Use TUI multi-select for file selection (only for smaller backups)
-		if len(meta.Files) <= 100 {
+		if len(meta.Files) <= cfg.GetRestoreFilePickerThreshold() {
 			selected, err := tui.FilePickerForm(meta.Files)
 			if err != nil {
 				return fmt.Errorf("file selection failed: %w", err)

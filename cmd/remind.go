@@ -3,9 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
+	"github.com/harshpatel5940/stash/internal/config"
 	"github.com/harshpatel5940/stash/internal/gittracker"
 	"github.com/harshpatel5940/stash/internal/ui"
 	"github.com/spf13/cobra"
@@ -42,21 +42,27 @@ func init() {
 func runRemind(cmd *cobra.Command, args []string) error {
 	ui.PrintSectionHeader("🔍", "Scanning Git Repositories")
 
-	gt := gittracker.NewGitTracker("")
-
-	homeDir, _ := os.UserHomeDir()
-	searchDirs := []string{
-		filepath.Join(homeDir, "Documents"),
-		filepath.Join(homeDir, "Projects"),
-		filepath.Join(homeDir, "Code"),
-		filepath.Join(homeDir, "Dev"),
-		filepath.Join(homeDir, "workspace"),
-		filepath.Join(homeDir, "github"),
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
+	cfg.ExpandPaths()
+
+	// Create git tracker with config values
+	gt := gittracker.NewGitTrackerWithConfig(
+		"",
+		cfg.GetGitMaxDepth(),
+		cfg.GetGitSkipDirs(),
+	)
+
+	searchDirs := cfg.GetGitSearchDirs()
 
 	if err := gt.ScanDirectories(searchDirs); err != nil {
 		return fmt.Errorf("failed to scan directories: %w", err)
 	}
+
+	homeDir, _ := os.UserHomeDir()
 
 	allRepos := gt.GetRepos()
 	if len(allRepos) == 0 {

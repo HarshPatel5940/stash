@@ -54,6 +54,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to create config: %w", err)
 		}
 		fmt.Printf("✓ Created config: %s\n", configPath)
+		fmt.Println("\n📝 Default configuration includes:")
+		fmt.Println("   • Backup retention: Keep 5 backups, auto-cleanup enabled")
+		fmt.Println("   • Git scanning: Documents, Projects, Code, Dev, workspace, github")
+		fmt.Println("   • Secret directories: .ssh, .gnupg, .aws")
+		fmt.Println("   • Shell history: .zsh_history, .bash_history, .zhistory")
+		fmt.Println("   • macOS defaults: Dock, Finder, and 12+ system preferences")
+		fmt.Println("   • Browser data: Chrome, Firefox, Safari, Arc (enabled)")
+		fmt.Println("   • Restore UI: Interactive TUI enabled")
+		fmt.Printf("\n   Customize with: stash config edit\n")
 	}
 
 	if keyExists {
@@ -78,16 +87,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	if !configExists || !keyExists {
-		fmt.Printf("✓ Initialization complete!\n")
+		fmt.Printf("\n✓ Initialization complete!\n")
 		fmt.Printf("\nNext steps:\n")
 		fmt.Printf("  1. SECURE YOUR KEY: Store %s in a password manager\n", keyPath)
-		fmt.Printf("  2. Review and customize ~/.stash.yaml if needed\n")
-		fmt.Printf("  3. Run 'stash list' to preview what will be backed up\n")
-		fmt.Printf("  4. Run 'stash backup' to create your first backup\n")
-		fmt.Printf("  5. Store backup files (.age) in cloud/external drive\n")
+		fmt.Printf("  2. Customize config (optional): stash config edit\n")
+		fmt.Printf("  3. Run 'stash backup' to create your first backup\n")
+		fmt.Printf("  4. Store backup files (.age) in cloud/external drive\n")
+		fmt.Printf("\n💡 Pro tip: Run 'stash config show' to see all settings\n")
 	} else {
 		fmt.Printf("\n✓ Already initialized!\n")
 		fmt.Printf("\n💡 Remember: Keep %s safe!\n", keyPath)
+		fmt.Printf("💡 View config: stash config show\n")
 	}
 
 	return nil

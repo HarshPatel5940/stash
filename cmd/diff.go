@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/harshpatel5940/stash/internal/config"
 	"github.com/harshpatel5940/stash/internal/diff"
 	"github.com/harshpatel5940/stash/internal/ui"
 	"github.com/spf13/cobra"
@@ -48,6 +49,12 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	oldBackup, _ = filepath.Abs(oldBackup)
 	newBackup, _ = filepath.Abs(newBackup)
 
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
 	ui.PrintSectionHeader("📊", "Comparing Backups")
 
 	// Perform the comparison with options
@@ -80,7 +87,7 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	// Show added files
 	if len(result.AddedFiles) > 0 {
 		fmt.Println(ui.Bold("Added Files:"))
-		limit := 10
+		limit := cfg.GetDiffDisplayLimit()
 		if diffVerbose {
 			limit = len(result.AddedFiles)
 		}
@@ -99,7 +106,7 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	// Show removed files
 	if len(result.RemovedFiles) > 0 {
 		fmt.Println(ui.Bold("Removed Files:"))
-		limit := 10
+		limit := cfg.GetDiffDisplayLimit()
 		if diffVerbose {
 			limit = len(result.RemovedFiles)
 		}
@@ -116,9 +123,10 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	}
 
 	// Show modified files
+	// Show modified files (size deltas)
 	if len(result.ModifiedFiles) > 0 {
 		fmt.Println(ui.Bold("Modified Files:"))
-		limit := 10
+		limit := cfg.GetDiffDisplayLimit()
 		if diffVerbose {
 			limit = len(result.ModifiedFiles)
 		}
