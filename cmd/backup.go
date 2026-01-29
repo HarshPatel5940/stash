@@ -924,9 +924,15 @@ func backupGitRepos(tempDir string, meta *metadata.Metadata) error {
 		return err
 	}
 
-	for _, repo := range gt.GetRepos() {
-		if repo.Dirty {
-			fmt.Printf("  ⚠️  Uncommitted changes in %s\n", repo.Path)
+	// Warn about repos needing attention
+	reposNeedingAttention := gt.GetReposNeedingAttention()
+	for _, repo := range reposNeedingAttention {
+		if repo.Dirty && repo.UnpushedCount > 0 {
+			fmt.Printf("  ⚠️  %s: uncommitted changes + %d unpushed commit(s)\n", repo.Path, repo.UnpushedCount)
+		} else if repo.Dirty {
+			fmt.Printf("  ⚠️  %s: uncommitted changes\n", repo.Path)
+		} else if repo.UnpushedCount > 0 {
+			fmt.Printf("  ⚠️  %s: %d unpushed commit(s)\n", repo.Path, repo.UnpushedCount)
 		}
 	}
 
