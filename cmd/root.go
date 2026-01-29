@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var Version = "1.1.1"
+var Version = "1.2.1"
 
 var rootCmd = &cobra.Command{
 	Use:   "stash",
