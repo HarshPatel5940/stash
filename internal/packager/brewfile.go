@@ -57,11 +57,11 @@ func parseBrewfileLine(line string) *BrewfileItem {
 	}
 
 	itemType := parts[0]
-	
+
 	// Extract name (remove quotes if present)
 	name := parts[1]
 	name = strings.Trim(name, `"'`)
-	
+
 	// Handle comma at end
 	name = strings.TrimSuffix(name, ",")
 

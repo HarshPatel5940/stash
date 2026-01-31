@@ -363,7 +363,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 	if options.InstallHomebrew && fileExists(filepath.Join(persistentPackagesDir, "Brewfile")) {
 		brewfilePath := filepath.Join(persistentPackagesDir, "Brewfile")
-		
+
 		// Parse Brewfile into individual items
 		items, err := packager.ParseBrewfile(brewfilePath)
 		if err != nil {
@@ -379,7 +379,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 					RawLine: item.RawLine,
 				})
 			}
-			
+
 			selectedItems, err := tui.BrewPackagePickerForm(tuiItems)
 			if err != nil {
 				ui.PrintWarning("Package selection failed: %v", err)
@@ -395,7 +395,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 						RawLine: tuiItem.RawLine,
 					})
 				}
-				
+
 				tempBrewfile := filepath.Join(tempDir, "Brewfile.filtered")
 				if err := packager.CreateFilteredBrewfile(filteredItems, tempBrewfile); err != nil {
 					ui.PrintWarning("Failed to create filtered Brewfile: %v", err)
@@ -454,7 +454,7 @@ func interactivePickAll(files []metadata.FileInfo, tempDir string, hasBrewfile, 
 
 	// Add package installation options
 	content.WriteString("# === PACKAGES & SETTINGS ===\n\n")
-	
+
 	if hasBrewfile {
 		content.WriteString("pick [BREW] Install Homebrew packages (may take a while)\n")
 	}
@@ -523,7 +523,7 @@ func interactivePickAll(files []metadata.FileInfo, tempDir string, hasBrewfile, 
 
 	var selected []metadata.FileInfo
 	options := RestoreOptions{RestoreFiles: true}
-	
+
 	scanner := bufio.NewScanner(strings.NewReader(string(planContent)))
 	lineNum := 0
 
@@ -548,7 +548,7 @@ func interactivePickAll(files []metadata.FileInfo, tempDir string, hasBrewfile, 
 		}
 
 		itemType := strings.Trim(parts[1], "[]")
-		
+
 		// Handle package/settings items
 		switch itemType {
 		case "BREW":
