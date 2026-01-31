@@ -18,19 +18,10 @@ var (
 var remindCmd = &cobra.Command{
 	Use:   "remind",
 	Short: "Show git repos needing attention",
-	Long: `Scans your common project directories for git repositories and shows
+	Long: `Scans your project directories for git repositories and shows
 which ones have uncommitted changes or unpushed commits.
 
-This is useful to run before backup or at the end of the day to ensure
-all your work is safely committed and pushed.
-
-Scanned directories:
-  - ~/Documents
-  - ~/Projects
-  - ~/Code
-  - ~/Dev
-  - ~/workspace
-  - ~/github`,
+Run before backup or at end of day to ensure all work is committed.`,
 	RunE: runRemind,
 }
 
@@ -40,16 +31,14 @@ func init() {
 }
 
 func runRemind(cmd *cobra.Command, args []string) error {
-	ui.PrintSectionHeader("🔍", "Scanning Git Repositories")
+	ui.Verbose = remindVerbose
 
-	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 	cfg.ExpandPaths()
 
-	// Create git tracker with config values
 	gt := gittracker.NewGitTrackerWithConfig(
 		"",
 		cfg.GetGitMaxDepth(),
@@ -59,91 +48,64 @@ func runRemind(cmd *cobra.Command, args []string) error {
 	searchDirs := cfg.GetGitSearchDirs()
 
 	if err := gt.ScanDirectories(searchDirs); err != nil {
-		return fmt.Errorf("failed to scan directories: %w", err)
+		return fmt.Errorf("failed to scan: %w", err)
 	}
 
 	homeDir, _ := os.UserHomeDir()
 
 	allRepos := gt.GetRepos()
 	if len(allRepos) == 0 {
-		fmt.Println("\nNo git repositories found in common directories.")
+		ui.PrintInfo("No git repositories found")
 		return nil
 	}
 
 	needsAttention := gt.GetReposNeedingAttention()
 
-	if remindVerbose {
-		// Show all repos with their status
-		fmt.Printf("\n📁 Found %d repositories:\n\n", len(allRepos))
-
-		for _, repo := range allRepos {
-			shortPath := shortenPath(repo.Path, homeDir)
-			status := repo.GetStatusSummary()
-
-			if repo.NeedsAttention() {
-				fmt.Printf("  ⚠️  %s\n", shortPath)
-				fmt.Printf("      Branch: %s | Status: %s\n\n", repo.Branch, ui.Warning(status))
-			} else {
-				fmt.Printf("  ✓  %s\n", shortPath)
-				fmt.Printf("      Branch: %s | Status: %s\n\n", repo.Branch, ui.Success(status))
-			}
-		}
-	}
-
+	// Minimal: all clean
 	if len(needsAttention) == 0 {
-		fmt.Println()
-		ui.PrintSuccess("All %d repositories are clean and synced!", len(allRepos))
+		ui.PrintSuccess("All %d repos clean", len(allRepos))
 		return nil
 	}
 
 	// Show repos needing attention
-	fmt.Printf("\n⚠️  %d of %d repositories need attention:\n\n", len(needsAttention), len(allRepos))
+	fmt.Printf("%d of %d repos need attention:\n", len(needsAttention), len(allRepos))
 
 	for _, repo := range needsAttention {
-		shortPath := shortenPath(repo.Path, homeDir)
-		fmt.Printf("  %s\n", ui.Bold(shortPath))
-		fmt.Printf("    Branch: %s\n", repo.Branch)
+		shortPath := shortenRemindPath(repo.Path, homeDir)
+		issues := []string{}
 
 		if repo.Dirty {
-			fmt.Printf("    %s Uncommitted changes\n", ui.Warning("•"))
+			issues = append(issues, "uncommitted")
 		}
 		if repo.UnpushedCount > 0 {
-			fmt.Printf("    %s %d unpushed commit(s)\n", ui.Warning("•"), repo.UnpushedCount)
+			issues = append(issues, fmt.Sprintf("%d unpushed", repo.UnpushedCount))
 		}
 		if repo.Behind > 0 {
-			fmt.Printf("    %s %d commit(s) behind remote\n", ui.Info("•"), repo.Behind)
+			issues = append(issues, fmt.Sprintf("%d behind", repo.Behind))
 		}
+
+		fmt.Printf("  %s %s (%s)\n", ui.IconWarning, shortPath, strings.Join(issues, ", "))
+	}
+
+	// Verbose: show all repos
+	if remindVerbose {
 		fmt.Println()
-	}
-
-	// Print suggestions
-	fmt.Println(strings.Repeat("─", 50))
-	fmt.Println("\n💡 Suggestions:")
-
-	hasUncommitted := false
-	hasUnpushed := false
-	for _, repo := range needsAttention {
-		if repo.Dirty {
-			hasUncommitted = true
-		}
-		if repo.UnpushedCount > 0 {
-			hasUnpushed = true
+		ui.PrintDivider()
+		fmt.Printf("All repositories (%d):\n", len(allRepos))
+		for _, repo := range allRepos {
+			shortPath := shortenRemindPath(repo.Path, homeDir)
+			if repo.NeedsAttention() {
+				fmt.Printf("  %s %s\n", ui.IconWarning, shortPath)
+			} else {
+				fmt.Printf("  %s %s\n", ui.IconSuccess, shortPath)
+			}
 		}
 	}
-
-	if hasUncommitted {
-		fmt.Println("   • Commit your changes: git add . && git commit -m \"message\"")
-	}
-	if hasUnpushed {
-		fmt.Println("   • Push your commits: git push")
-	}
-	fmt.Println("   • Run 'stash backup' after syncing to create a backup")
 
 	return nil
 }
 
-// shortenPath replaces home directory with ~
-func shortenPath(path, homeDir string) string {
+func shortenRemindPath(path, homeDir string) string {
 	if strings.HasPrefix(path, homeDir) {
 		return "~" + path[len(homeDir):]
 	}

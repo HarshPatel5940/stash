@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/harshpatel5940/stash/internal/ui"
@@ -38,8 +39,22 @@ func (i *Installer) InstallBrewPackages(brewfilePath string) error {
 	// Create progress bar
 	bar := ui.NewProgressBar(count, "Homebrew")
 
+	// Clear any existing lock file to prevent hangs
+	brewPrefix := os.Getenv("HOMEBREW_PREFIX")
+	if brewPrefix == "" {
+		// Try to get it from brew command
+		if out, err := exec.Command("brew", "--prefix").Output(); err == nil {
+			brewPrefix = strings.TrimSpace(string(out))
+		}
+	}
+	if brewPrefix != "" {
+		lockFile := filepath.Join(brewPrefix, "var", "homebrew", "locks", "update")
+		_ = os.Remove(lockFile) // Ignore error if file doesn't exist
+	}
+
 	// Run brew bundle and parse output
 	cmd := exec.Command("brew", "bundle", "--file="+brewfilePath)
+	cmd.Env = append(os.Environ(), "HOMEBREW_NO_AUTO_UPDATE=1")
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -72,10 +87,12 @@ func (i *Installer) InstallBrewPackages(brewfilePath string) error {
 	}()
 
 	// Capture stderr for errors
+	var stderrBuf strings.Builder
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
+			stderrBuf.WriteString(line + "\n")
 			if i.verbose {
 				fmt.Printf("    [stderr] %s\n", line)
 			}
@@ -84,6 +101,19 @@ func (i *Installer) InstallBrewPackages(brewfilePath string) error {
 
 	if err := cmd.Wait(); err != nil {
 		bar.Finish()
+		// Show last few lines of stderr if not verbose
+		if !i.verbose && stderrBuf.Len() > 0 {
+			lines := strings.Split(strings.TrimSpace(stderrBuf.String()), "\n")
+			// Show last 10 lines
+			start := len(lines) - 10
+			if start < 0 {
+				start = 0
+			}
+			fmt.Println("\n  Last errors from brew bundle:")
+			for _, line := range lines[start:] {
+				fmt.Printf("    %s\n", line)
+			}
+		}
 		return fmt.Errorf("brew bundle failed: %w", err)
 	}
 

@@ -19,6 +19,7 @@ var (
 	syncRegion   string
 	syncEndpoint string
 	syncPrefix   string
+	syncVerbose  bool
 )
 
 var syncCmd = &cobra.Command{
@@ -26,22 +27,13 @@ var syncCmd = &cobra.Command{
 	Short: "Sync backups with cloud storage",
 	Long: `Synchronize backups with S3-compatible cloud storage.
 
-Supports:
-  - AWS S3
-  - Backblaze B2
-  - MinIO
-  - DigitalOcean Spaces
-  - Cloudflare R2
-  - Any S3-compatible service
+Supports AWS S3, Backblaze B2, MinIO, DigitalOcean Spaces, Cloudflare R2.
 
-Configure in ~/.stash.yaml or use flags:
+Configure in ~/.stash.yaml:
   cloud:
     enabled: true
-    provider: s3
     bucket: my-backups
-    region: us-east-1
-    endpoint: ""  # Optional, for non-AWS S3 services
-    prefix: stash/  # Optional path prefix`,
+    region: us-east-1`,
 }
 
 var syncUpCmd = &cobra.Command{
@@ -50,26 +42,21 @@ var syncUpCmd = &cobra.Command{
 	Long: `Upload one or all local backups to cloud storage.
 
 Examples:
-  stash sync up                           # Upload all local backups
-  stash sync up backup-2024-01-15.tar.gz.age  # Upload specific backup`,
+  stash sync up                    # Upload all
+  stash sync up backup.tar.gz.age  # Upload specific`,
 	RunE: runSyncUp,
 }
 
 var syncDownCmd = &cobra.Command{
 	Use:   "down <backup-name>",
 	Short: "Download backup from cloud",
-	Long: `Download a backup from cloud storage.
-
-Examples:
-  stash sync down backup-2024-01-15.tar.gz.age`,
-	Args: cobra.ExactArgs(1),
-	RunE: runSyncDown,
+	Args:  cobra.ExactArgs(1),
+	RunE:  runSyncDown,
 }
 
 var syncListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List backups in cloud storage",
-	Long:  `List all backups stored in cloud storage.`,
 	RunE:  runSyncList,
 }
 
@@ -79,11 +66,11 @@ func init() {
 	syncCmd.AddCommand(syncDownCmd)
 	syncCmd.AddCommand(syncListCmd)
 
-	// Global flags for sync commands
 	syncCmd.PersistentFlags().StringVar(&syncBucket, "bucket", "", "S3 bucket name")
 	syncCmd.PersistentFlags().StringVar(&syncRegion, "region", "", "AWS region")
 	syncCmd.PersistentFlags().StringVar(&syncEndpoint, "endpoint", "", "Custom S3 endpoint")
 	syncCmd.PersistentFlags().StringVar(&syncPrefix, "prefix", "", "Path prefix in bucket")
+	syncCmd.PersistentFlags().BoolVarP(&syncVerbose, "verbose", "v", false, "Show detailed output")
 }
 
 func getCloudProvider() (cloud.Provider, *config.Config, error) {
@@ -93,10 +80,7 @@ func getCloudProvider() (cloud.Provider, *config.Config, error) {
 	}
 	cfg.ExpandPaths()
 
-	// Build cloud config from flags or config file
-	cloudCfg := cloud.Config{
-		Provider: "s3",
-	}
+	cloudCfg := cloud.Config{Provider: "s3"}
 
 	if cfg.Cloud != nil {
 		cloudCfg.Bucket = cfg.Cloud.Bucket
@@ -105,7 +89,6 @@ func getCloudProvider() (cloud.Provider, *config.Config, error) {
 		cloudCfg.Prefix = cfg.Cloud.Prefix
 	}
 
-	// Override with flags
 	if syncBucket != "" {
 		cloudCfg.Bucket = syncBucket
 	}
@@ -119,12 +102,11 @@ func getCloudProvider() (cloud.Provider, *config.Config, error) {
 		cloudCfg.Prefix = syncPrefix
 	}
 
-	// Validate
 	if cloudCfg.Bucket == "" {
-		return nil, nil, fmt.Errorf("bucket not configured. Set in ~/.stash.yaml or use --bucket flag")
+		return nil, nil, fmt.Errorf("bucket not configured (use --bucket or ~/.stash.yaml)")
 	}
 	if cloudCfg.Region == "" {
-		return nil, nil, fmt.Errorf("region not configured. Set in ~/.stash.yaml or use --region flag")
+		return nil, nil, fmt.Errorf("region not configured (use --region or ~/.stash.yaml)")
 	}
 
 	provider, err := cloud.NewProvider(cloudCfg)
@@ -136,12 +118,12 @@ func getCloudProvider() (cloud.Provider, *config.Config, error) {
 }
 
 func runSyncUp(cmd *cobra.Command, args []string) error {
+	ui.Verbose = syncVerbose
+
 	provider, cfg, err := getCloudProvider()
 	if err != nil {
 		return err
 	}
-
-	ui.PrintSectionHeader("☁️", fmt.Sprintf("Uploading to %s", provider.GetName()))
 
 	if len(args) > 0 {
 		// Upload specific file
@@ -151,7 +133,7 @@ func runSyncUp(cmd *cobra.Command, args []string) error {
 		}
 
 		if _, err := os.Stat(backupFile); err != nil {
-			return fmt.Errorf("backup file not found: %s", backupFile)
+			return fmt.Errorf("backup not found: %s", backupFile)
 		}
 
 		return uploadBackup(provider, backupFile)
@@ -160,7 +142,7 @@ func runSyncUp(cmd *cobra.Command, args []string) error {
 	// Upload all local backups
 	entries, err := os.ReadDir(cfg.BackupDir)
 	if err != nil {
-		return fmt.Errorf("failed to read backup directory: %w", err)
+		return fmt.Errorf("failed to read backup dir: %w", err)
 	}
 
 	var backups []string
@@ -175,11 +157,9 @@ func runSyncUp(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(backups) == 0 {
-		fmt.Println("\nNo backups found to upload")
+		ui.PrintInfo("No backups to upload")
 		return nil
 	}
-
-	fmt.Printf("\nFound %d local backup(s)\n\n", len(backups))
 
 	uploaded := 0
 	skipped := 0
@@ -187,46 +167,46 @@ func runSyncUp(cmd *cobra.Command, args []string) error {
 		name := filepath.Base(backup)
 		exists, err := provider.Exists(name)
 		if err != nil {
-			fmt.Printf("  ⚠️  Error checking %s: %v\n", name, err)
+			ui.PrintVerbose("Error checking %s: %v", name, err)
 			continue
 		}
 
 		if exists {
-			fmt.Printf("  ⏭️  %s (already exists)\n", name)
+			ui.PrintVerbose("Skipped %s (exists)", name)
 			skipped++
 			continue
 		}
 
 		if err := uploadBackup(provider, backup); err != nil {
-			fmt.Printf("  ✗ Failed to upload %s: %v\n", name, err)
+			ui.PrintError("Failed: %s - %v", name, err)
 		} else {
 			uploaded++
 		}
 	}
 
-	fmt.Printf("\n✓ Uploaded: %d, Skipped: %d\n", uploaded, skipped)
+	ui.PrintSuccess("Uploaded %d, skipped %d", uploaded, skipped)
 	return nil
 }
 
 func uploadBackup(provider cloud.Provider, backupPath string) error {
 	name := filepath.Base(backupPath)
-	info, err := os.Stat(backupPath)
-	if err != nil {
-		return err
-	}
+	info, _ := os.Stat(backupPath)
 
-	fmt.Printf("  ⬆️  Uploading %s (%s)...", name, metadata.FormatSize(info.Size()))
+	spinner := ui.NewSpinner(fmt.Sprintf("Uploading %s (%s)", name, metadata.FormatSize(info.Size())))
+	spinner.Start()
 
 	if err := provider.Upload(backupPath, name); err != nil {
-		fmt.Printf(" ✗\n")
+		spinner.Fail()
 		return err
 	}
 
-	fmt.Printf(" ✓\n")
+	spinner.Stop()
 	return nil
 }
 
 func runSyncDown(cmd *cobra.Command, args []string) error {
+	ui.Verbose = syncVerbose
+
 	provider, cfg, err := getCloudProvider()
 	if err != nil {
 		return err
@@ -234,70 +214,75 @@ func runSyncDown(cmd *cobra.Command, args []string) error {
 
 	backupName := args[0]
 
-	ui.PrintSectionHeader("☁️", fmt.Sprintf("Downloading from %s", provider.GetName()))
-
-	// Check if file exists in cloud
 	exists, err := provider.Exists(backupName)
 	if err != nil {
 		return fmt.Errorf("failed to check cloud: %w", err)
 	}
 	if !exists {
-		return fmt.Errorf("backup not found in cloud: %s", backupName)
+		return fmt.Errorf("not found in cloud: %s", backupName)
 	}
 
 	localPath := filepath.Join(cfg.BackupDir, backupName)
 
-	// Check if already exists locally
 	if _, err := os.Stat(localPath); err == nil {
-		fmt.Printf("\n⚠️  File already exists locally: %s\n", localPath)
-		fmt.Println("   Delete it first if you want to re-download")
+		ui.PrintWarning("Already exists locally: %s", localPath)
 		return nil
 	}
 
-	fmt.Printf("\n⬇️  Downloading %s...", backupName)
+	spinner := ui.NewSpinner(fmt.Sprintf("Downloading %s", backupName))
+	spinner.Start()
 
 	if err := provider.Download(backupName, localPath); err != nil {
-		fmt.Printf(" ✗\n")
-		return fmt.Errorf("failed to download: %w", err)
+		spinner.Fail()
+		return fmt.Errorf("download failed: %w", err)
 	}
 
-	fmt.Printf(" ✓\n")
-	fmt.Printf("\n✓ Downloaded to: %s\n", localPath)
+	spinner.Stop()
+	ui.PrintDim("  Saved: %s", localPath)
 	return nil
 }
 
 func runSyncList(cmd *cobra.Command, args []string) error {
+	ui.Verbose = syncVerbose
+
 	provider, _, err := getCloudProvider()
 	if err != nil {
 		return err
 	}
 
-	ui.PrintSectionHeader("☁️", fmt.Sprintf("Cloud Backups (%s)", provider.GetName()))
-
 	entries, err := provider.List("")
 	if err != nil {
-		return fmt.Errorf("failed to list backups: %w", err)
+		return fmt.Errorf("failed to list: %w", err)
 	}
 
 	if len(entries) == 0 {
-		fmt.Println("\nNo backups found in cloud storage")
-		fmt.Println("\n💡 Upload backups with: stash sync up")
+		ui.PrintInfo("No backups in cloud")
+		ui.PrintDim("  Upload: stash sync up")
 		return nil
 	}
 
-	// Sort by date descending
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].LastModified.After(entries[j].LastModified)
 	})
 
-	fmt.Printf("\n%d backup(s) found:\n\n", len(entries))
-
-	for i, entry := range entries {
-		fmt.Printf("%d. %s\n", i+1, entry.Name)
-		fmt.Printf("   📅 Modified: %s\n", entry.LastModified.Format("2006-01-02 15:04:05"))
-		fmt.Printf("   💾 Size: %s\n\n", metadata.FormatSize(entry.Size))
+	// Build table
+	headers := []string{"NAME", "SIZE", "DATE"}
+	var rows [][]string
+	for _, entry := range entries {
+		name := entry.Name
+		if len(name) > 35 {
+			name = name[:32] + "..."
+		}
+		rows = append(rows, []string{
+			name,
+			metadata.FormatSize(entry.Size),
+			entry.LastModified.Format("2006-01-02 15:04"),
+		})
 	}
 
-	fmt.Println("💡 Download with: stash sync down <backup-name>")
+	ui.PrintTable(headers, rows)
+	fmt.Println()
+	ui.PrintDim("%d backup(s) in %s", len(entries), provider.GetName())
+
 	return nil
 }

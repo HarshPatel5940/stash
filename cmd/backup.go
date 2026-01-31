@@ -76,22 +76,30 @@ func init() {
 }
 
 func runBackup(cmd *cobra.Command, args []string) error {
+	// Set verbose mode for ui package
+	ui.Verbose = backupVerbose
+
 	// Initialize statistics tracking
 	backupStats := stats.New()
 
-	if backupDryRun {
-		fmt.Println("🔍 DRY RUN MODE - No files will be backed up")
-	} else {
-		fmt.Println("🚀 Starting backup process...")
+	// Show spinner for non-dry-run, non-verbose mode
+	var spinner *ui.Spinner
+	if !backupDryRun && !backupVerbose {
+		spinner = ui.NewSpinner("Backing up")
+		spinner.Start()
+	} else if backupDryRun {
+		ui.PrintInfo("DRY RUN - No files will be backed up")
 	}
-	fmt.Println()
 
 	cfg, err := config.Load()
 	if err != nil {
+		if spinner != nil {
+			spinner.Fail()
+		}
 		return stasherrors.WrapWithDetection(err, "Failed to load configuration")
 	}
 
-	ui.PrintSectionHeader("📦", "Starting Backup")
+	ui.PrintVerbose("Starting backup...")
 	cfg.ExpandPaths()
 
 	if backupOutput != "" {
@@ -118,13 +126,9 @@ func runBackup(cmd *cobra.Command, args []string) error {
 				doIncrementalBackup = true
 			}
 
-			// Show recommendation
+			// Show recommendation (verbose only)
 			recommendation := incrMgr.GetRecommendation()
-			if doIncrementalBackup {
-				ui.PrintInfo("📊 %s", recommendation)
-			} else {
-				ui.PrintInfo("📊 %s", recommendation)
-			}
+			ui.PrintVerbose("%s", recommendation)
 		}
 	}
 
@@ -217,8 +221,8 @@ func runBackup(cmd *cobra.Command, args []string) error {
 
 	if !backupSkipBrowsers {
 		tasks = append(tasks, backupTask{"BrowserData", func() error { return backupBrowserData(tempDir, meta, incrMgr, doIncrementalBackup) }})
-	} else if backupVerbose {
-		fmt.Println("🚫 Skipping browser data backup")
+	} else {
+		ui.PrintVerbose("Skipping browser data")
 	}
 
 	var wg sync.WaitGroup
@@ -228,23 +232,13 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	var errorsMu sync.Mutex
 
 	doneChan := make(chan bool)
-	if !backupVerbose {
-		go func() {
-			completed := 0
-			total := len(tasks)
-			var lastTask string
-
-			fmt.Printf("\r⏳ Backing up... (0/%d)", total)
-
-			for taskName := range statusChan {
-				completed++
-				lastTask = taskName
-				fmt.Printf("\r⏳ Backing up... (%d/%d) - Finished: %s     ", completed, total, lastTask)
-			}
-			fmt.Println()
-			doneChan <- true
-		}()
-	}
+	// Progress tracking only in verbose mode (spinner handles non-verbose)
+	go func() {
+		for taskName := range statusChan {
+			ui.PrintVerbose("Completed: %s", taskName)
+		}
+		doneChan <- true
+	}()
 
 	for _, task := range tasks {
 		wg.Add(1)
@@ -252,10 +246,7 @@ func runBackup(cmd *cobra.Command, args []string) error {
 			defer wg.Done()
 
 			taskStart := time.Now()
-
-			if backupVerbose {
-				fmt.Printf("Started: %s\n", t.Name)
-			}
+			ui.PrintVerbose("Started: %s", t.Name)
 
 			if err := t.Func(); err != nil {
 				// Convert to structured error if needed
@@ -266,9 +257,7 @@ func runBackup(cmd *cobra.Command, args []string) error {
 					stashErr = stasherrors.WrapWithDetection(err, fmt.Sprintf("Failed during %s", t.Name))
 				}
 
-				if backupVerbose {
-					fmt.Printf("⚠️  %s: %v\n", t.Name, err)
-				}
+				ui.PrintVerbose("Failed: %s - %v", t.Name, err)
 
 				errorsMu.Lock()
 				errors = append(errors, stashErr)
@@ -288,24 +277,15 @@ func runBackup(cmd *cobra.Command, args []string) error {
 			}
 
 			taskDuration := time.Since(taskStart)
-
-			if backupVerbose {
-				fmt.Printf("Completed: %s (%.2fs)\n", t.Name, taskDuration.Seconds())
-			}
-
-			if !backupVerbose {
-				statusChan <- t.Name
-			}
+			ui.PrintVerbose("Done: %s (%.1fs)", t.Name, taskDuration.Seconds())
+			statusChan <- t.Name
 		}(task)
 	}
 
 	wg.Wait()
 	close(errChan)
 	close(statusChan)
-
-	if !backupVerbose {
-		<-doneChan
-	}
+	<-doneChan
 
 	// Handle errors with better messages
 	for err := range errChan {
@@ -318,16 +298,15 @@ func runBackup(cmd *cobra.Command, args []string) error {
 
 	readmePath := filepath.Join(tempDir, "README.txt")
 	if err := createReadme(readmePath, meta); err != nil {
-		fmt.Printf("⚠️  Warning: failed to create README: %v\n", err)
+		ui.PrintVerbose("Warning: failed to create README: %v", err)
 	}
 
 	if backupDryRun {
-		fmt.Println("\n" + strings.Repeat("=", 50))
-		fmt.Println("🔍 DRY RUN SUMMARY - No backup created")
-		fmt.Println(strings.Repeat("=", 50))
-		fmt.Println("\n" + meta.Summary())
-		fmt.Printf("\n📁 Would create backup at: %s/%s.tar.gz.age\n", cfg.BackupDir, backupName)
-		fmt.Println("\n💡 Run without --dry-run to create actual backup")
+		ui.PrintInfo("DRY RUN - Would create: %s/%s.tar.gz.age (%d files)",
+			cfg.BackupDir, backupName, meta.GetFileCount())
+		if backupVerbose {
+			fmt.Println(meta.Summary())
+		}
 		return nil
 	}
 
@@ -340,30 +319,31 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create backup directory: %w", err)
 	}
 
-	fmt.Println("\n📦 Creating archive...")
+	ui.PrintVerbose("Creating archive...")
 	archivePath := filepath.Join(cfg.BackupDir, backupName+".tar.gz")
-	if backupVerbose {
-		fmt.Printf("  📝 Archive path: %s\n", archivePath)
-	}
+	ui.PrintVerbose("Archive path: %s", archivePath)
 	if err := arch.Create(tempDir, archivePath); err != nil {
+		if spinner != nil {
+			spinner.Fail()
+		}
 		return fmt.Errorf("failed to create archive: %w", err)
 	}
 
 	var finalPath string
 	if backupNoEncrypt {
 		finalPath = archivePath
-		fmt.Println("⚠️  Backup is NOT encrypted (--no-encrypt was used)")
+		ui.PrintWarning("Backup is NOT encrypted (--no-encrypt)")
 	} else {
-		fmt.Println("🔐 Encrypting backup...")
+		ui.PrintVerbose("Encrypting backup...")
 		encryptor := crypto.NewEncryptor(cfg.EncryptionKey)
 		encryptedPath := archivePath + ".age"
 
-		if backupVerbose {
-			fmt.Printf("  🔑 Using key: %s\n", cfg.EncryptionKey)
-			fmt.Printf("  📝 Encrypted output: %s\n", encryptedPath)
-		}
+		ui.PrintVerbose("Using key: %s", cfg.EncryptionKey)
 
 		if err := encryptor.Encrypt(archivePath, encryptedPath); err != nil {
+			if spinner != nil {
+				spinner.Fail()
+			}
 			return fmt.Errorf("failed to encrypt backup: %w", err)
 		}
 
@@ -391,35 +371,37 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	meta.SetEncryptedSize(finalSize)
 	meta.SetTotalDuration(backupStats.TotalTime)
 
-	fmt.Println("\n" + strings.Repeat("=", 50))
-	fmt.Println("✅ Backup completed successfully!")
-	fmt.Println(strings.Repeat("=", 50))
-	fmt.Printf("\n📁 Backup location: %s\n", finalPath)
+	// Stop spinner before final output
+	if spinner != nil {
+		spinner.Stop()
+	}
 
-	// Display detailed statistics
-	if !backupVerbose {
-		// Show summary statistics in normal mode
-		if doIncrementalBackup {
-			fmt.Printf("🔄 Backup type:     Incremental\n")
-		} else {
-			fmt.Printf("🔄 Backup type:     Full\n")
-		}
-		fmt.Printf("💾 Original size:   %s\n", ui.FormatBytes(meta.BackupSize))
-		fmt.Printf("📦 Compressed size: %s (%.1f%% reduction)\n", ui.FormatBytes(compressedSize), meta.GetCompressionRatio())
-		fmt.Printf("🔐 Encrypted size:  %s\n", ui.FormatBytes(finalSize))
-		fmt.Printf("⏱️  Total time:      %s\n", backupStats.TotalTime.Round(time.Second))
-		fmt.Printf("📊 Total files:     %d\n", meta.GetFileCount())
-	} else {
-		// Show detailed statistics in verbose mode
+	// Minimal output: single line result
+	backupType := "full"
+	if doIncrementalBackup {
+		backupType = "incremental"
+	}
+	ui.PrintSuccess("Backup created: %s (%s, %d files, %s)",
+		filepath.Base(finalPath),
+		ui.FormatBytes(finalSize),
+		meta.GetFileCount(),
+		backupType,
+	)
+
+	// Verbose: detailed statistics
+	if backupVerbose {
+		ui.PrintDivider()
+		fmt.Printf("  Path: %s\n", finalPath)
+		fmt.Printf("  Original: %s\n", ui.FormatBytes(meta.BackupSize))
+		fmt.Printf("  Compressed: %s (%.0f%% reduction)\n", ui.FormatBytes(compressedSize), meta.GetCompressionRatio())
+		fmt.Printf("  Time: %s\n", backupStats.TotalTime.Round(time.Second))
 		ui.PrintStatistics(backupStats.ToMap())
 	}
 
-	fmt.Println("\n📖 To restore this backup on a new Mac:")
-	fmt.Printf("   stash restore %s\n", filepath.Base(finalPath))
+	ui.PrintDim("  Restore: stash restore %s", filepath.Base(finalPath))
 
 	// Update incremental index after successful backup
 	if incrMgr != nil && !backupDryRun {
-		// Collect all backed up file paths
 		var backedUpFiles []string
 		for _, fileInfo := range meta.Files {
 			backedUpFiles = append(backedUpFiles, fileInfo.OriginalPath)
@@ -427,32 +409,24 @@ func runBackup(cmd *cobra.Command, args []string) error {
 
 		isFull := !doIncrementalBackup
 		if err := incrMgr.UpdateIndex(backupName, backedUpFiles, isFull); err != nil {
-			ui.PrintWarning("Failed to update incremental index: %v", err)
-		} else if backupVerbose {
-			ui.PrintSuccess("Updated incremental backup index")
+			ui.PrintVerbose("Warning: failed to update incremental index: %v", err)
 		}
 	}
 
-	// Register backup in the registry for restore chain resolution
+	// Register backup in the registry
 	if !backupDryRun {
 		registry, err := incremental.LoadRegistry()
-		if err != nil {
-			ui.PrintWarning("Failed to load backup registry: %v", err)
-		} else {
-			backupType := "full"
+		if err == nil {
+			regType := "full"
 			baseBackup := ""
 			if doIncrementalBackup {
-				backupType = "incremental"
+				regType = "incremental"
 				if incrMgr != nil {
 					baseBackup = incrMgr.GetBaseBackup()
 				}
 			}
-			registry.RegisterBackup(backupName, finalPath, backupType, baseBackup)
-			if err := registry.Save(); err != nil {
-				ui.PrintWarning("Failed to save backup registry: %v", err)
-			} else if backupVerbose {
-				ui.PrintSuccess("Registered backup in registry")
-			}
+			registry.RegisterBackup(backupName, finalPath, regType, baseBackup)
+			_ = registry.Save()
 		}
 	}
 
@@ -462,15 +436,13 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	}
 
 	if backupKeepCount > 0 {
-		ui.PrintSectionHeader("🧹", "Cleaning up old backups...")
+		ui.PrintVerbose("Cleaning up old backups...")
 		cm := cleanup.NewCleanupManager(cfg.BackupDir)
 		deleted, err := cm.RotateByCount(backupKeepCount)
 		if err != nil {
-			ui.PrintWarning("Failed to cleanup old backups: %v", err)
+			ui.PrintWarning("Cleanup failed: %v", err)
 		} else if deleted > 0 {
-			ui.PrintSuccess("Deleted %d old backup(s), keeping %d most recent", deleted, backupKeepCount)
-		} else {
-			ui.PrintInfo("No cleanup needed (keeping %d backups)", backupKeepCount)
+			ui.PrintVerboseSuccess("Deleted %d old backup(s)", deleted)
 		}
 	}
 

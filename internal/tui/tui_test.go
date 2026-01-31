@@ -51,7 +51,7 @@ func TestFormatFileLabel(t *testing.T) {
 				Size:         1024,
 				IsDir:        false,
 			},
-			contains: "📄",
+			contains: "[F]",
 		},
 		{
 			name: "directory",
@@ -60,7 +60,7 @@ func TestFormatFileLabel(t *testing.T) {
 				Size:         4096,
 				IsDir:        true,
 			},
-			contains: "📁",
+			contains: "[D]",
 		},
 		{
 			name: "long path gets truncated",

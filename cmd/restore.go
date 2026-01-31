@@ -16,6 +16,7 @@ import (
 	"github.com/harshpatel5940/stash/internal/metadata"
 	"github.com/harshpatel5940/stash/internal/packager"
 	"github.com/harshpatel5940/stash/internal/tui"
+	"github.com/harshpatel5940/stash/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +26,7 @@ var (
 	restoreEditor     bool
 	restoreNoDecrypt  bool
 	restoreNoTUI      bool
+	restoreVerbose    bool
 )
 
 type RestoreOptions struct {
@@ -65,44 +67,40 @@ Use --no-tui for simple Y/n prompts instead of interactive multi-select.`,
 func init() {
 	rootCmd.AddCommand(restoreCmd)
 	restoreCmd.Flags().StringVarP(&restoreDecryptKey, "decrypt-key", "k", "", "Path to decryption key (default: ~/.stash.key)")
-	restoreCmd.Flags().BoolVar(&restoreDryRun, "dry-run", false, "Preview what would be restored without making changes")
-	restoreCmd.Flags().BoolVar(&restoreEditor, "editor", false, "Pick/drop individual files in your editor (git-rebase style)")
-	restoreCmd.Flags().BoolVar(&restoreNoDecrypt, "no-decrypt", false, "Backup is not encrypted")
-	restoreCmd.Flags().BoolVar(&restoreNoTUI, "no-tui", false, "Use simple Y/n prompts instead of interactive multi-select")
+	restoreCmd.Flags().BoolVar(&restoreDryRun, "dry-run", false, "Preview what would be restored")
+	restoreCmd.Flags().BoolVar(&restoreEditor, "editor", false, "Pick files in editor (git-rebase style)")
+	restoreCmd.Flags().BoolVar(&restoreNoDecrypt, "no-decrypt", false, "Skip decryption")
+	restoreCmd.Flags().BoolVar(&restoreNoTUI, "no-tui", false, "Use Y/n prompts instead of TUI")
+	restoreCmd.Flags().BoolVarP(&restoreVerbose, "verbose", "v", false, "Show detailed output")
 }
 
 func runRestore(cmd *cobra.Command, args []string) error {
+	ui.Verbose = restoreVerbose
 	backupFile := args[0]
 
-	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	if _, err := os.Stat(backupFile); os.IsNotExist(err) {
-
 		if !filepath.IsAbs(backupFile) {
 			homeDir, _ := os.UserHomeDir()
 			altPath := filepath.Join(homeDir, "stash-backups", backupFile)
 			if _, err := os.Stat(altPath); err == nil {
 				backupFile = altPath
-				fmt.Printf("📂 Using backup from: %s\n", altPath)
+				ui.PrintVerbose("Using: %s", altPath)
 			} else {
-				return fmt.Errorf("backup file not found: %s (also checked %s)", args[0], altPath)
+				return fmt.Errorf("backup not found: %s", args[0])
 			}
 		} else {
-			return fmt.Errorf("backup file not found: %s", backupFile)
+			return fmt.Errorf("backup not found: %s", backupFile)
 		}
 	}
 
 	if restoreDryRun {
-		fmt.Println("🔍 DRY RUN MODE - No files will be modified")
-		fmt.Println()
+		ui.PrintInfo("DRY RUN - No changes will be made")
 	}
-
-	fmt.Println("🔄 Starting restore process...")
-	fmt.Println()
 
 	if restoreDecryptKey == "" {
 		homeDir, _ := os.UserHomeDir()
@@ -119,10 +117,9 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 	if restoreNoDecrypt {
 		archivePath = backupFile
-		fmt.Println("⚠️  Skipping decryption (--no-decrypt was used)")
+		ui.PrintVerbose("Skipping decryption")
 	} else if strings.HasSuffix(backupFile, ".age") {
-		fmt.Println("🔐 Decrypting backup...")
-
+		ui.PrintVerbose("Decrypting...")
 		encryptor := crypto.NewEncryptor(restoreDecryptKey)
 		if !encryptor.KeyExists() {
 			return fmt.Errorf("decryption key not found: %s", restoreDecryptKey)
@@ -130,87 +127,71 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 		archivePath = filepath.Join(tempDir, "backup.tar.gz")
 		if err := encryptor.Decrypt(backupFile, archivePath); err != nil {
-			return fmt.Errorf("failed to decrypt backup: %w", err)
+			return fmt.Errorf("failed to decrypt: %w", err)
 		}
-		fmt.Println("  ✓ Decryption successful")
 	} else {
 		archivePath = backupFile
-		fmt.Println("⚠️  Backup does not appear to be encrypted (.age extension not found)")
+		ui.PrintVerbose("Not encrypted")
 	}
 
-	fmt.Println("\n📦 Extracting backup...")
+	ui.PrintVerbose("Extracting...")
 	extractDir := filepath.Join(tempDir, "extracted")
 	arch := archiver.NewArchiver()
 
 	if err := arch.Extract(archivePath, extractDir); err != nil {
-		return fmt.Errorf("failed to extract backup: %w", err)
+		return fmt.Errorf("failed to extract: %w", err)
 	}
-	fmt.Println("  ✓ Extraction successful")
 
-	fmt.Println("\n📋 Reading backup metadata...")
 	metadataPath := filepath.Join(extractDir, "metadata.json")
 	meta, err := metadata.Load(metadataPath)
 	if err != nil {
 		return fmt.Errorf("failed to load metadata: %w", err)
 	}
 
-	fmt.Printf("  Backup created: %s\n", meta.Timestamp.Format("2006-01-02 15:04:05"))
-	fmt.Printf("  Hostname: %s\n", meta.Hostname)
-	fmt.Printf("  Username: %s\n", meta.Username)
+	ui.PrintVerbose("Backup: %s (%s)", meta.Timestamp.Format("2006-01-02"), meta.Hostname)
 
 	// Check if this is an incremental backup
 	if meta.IsIncremental() {
-		fmt.Printf("  Backup type: Incremental (requires base backup)\n")
-		fmt.Printf("  Base backup: %s\n", meta.BaseBackup)
+		ui.PrintVerbose("Incremental backup, resolving chain...")
 
-		// Get the restore chain
 		chain, err := incremental.GetRestoreChain(backupFile)
 		if err != nil {
-			return fmt.Errorf("failed to resolve incremental backup chain: %w", err)
+			return fmt.Errorf("failed to resolve backup chain: %w", err)
 		}
 
 		if err := chain.Validate(); err != nil {
 			return fmt.Errorf("backup chain validation failed: %w", err)
 		}
 
-		fmt.Printf("\n📚 Restore chain: %s\n", chain.Summary())
+		ui.PrintVerbose("Chain: %s", chain.Summary())
 
 		// Extract and merge all backups in the chain
-		fmt.Println("\n📦 Extracting backup chain...")
-
 		for i, backupPath := range chain.GetBackupsInOrder() {
-			fmt.Printf("  [%d/%d] Extracting %s...\n", i+1, chain.GetTotalBackups(), filepath.Base(backupPath))
+			ui.PrintVerbose("Extracting %d/%d: %s", i+1, chain.GetTotalBackups(), filepath.Base(backupPath))
 
-			// Decrypt if needed
 			var chainArchivePath string
 			if strings.HasSuffix(backupPath, ".age") {
 				encryptor := crypto.NewEncryptor(restoreDecryptKey)
 				chainArchivePath = filepath.Join(tempDir, fmt.Sprintf("backup-%d.tar.gz", i))
 				if err := encryptor.Decrypt(backupPath, chainArchivePath); err != nil {
-					return fmt.Errorf("failed to decrypt backup %s: %w", backupPath, err)
+					return fmt.Errorf("failed to decrypt %s: %w", filepath.Base(backupPath), err)
 				}
 			} else {
 				chainArchivePath = backupPath
 			}
 
-			// Extract to the same directory (later backups override earlier ones)
 			if err := arch.Extract(chainArchivePath, extractDir); err != nil {
-				return fmt.Errorf("failed to extract backup %s: %w", backupPath, err)
+				return fmt.Errorf("failed to extract %s: %w", filepath.Base(backupPath), err)
 			}
 		}
 
-		fmt.Println("  ✓ All backups in chain extracted and merged")
-
-		// Reload metadata from the final (incremental) backup
 		meta, err = metadata.Load(metadataPath)
 		if err != nil {
 			return fmt.Errorf("failed to reload metadata: %w", err)
 		}
-	} else {
-		fmt.Printf("  Backup type: Full\n")
 	}
 
-	fmt.Printf("  Files: %d\n", len(meta.Files))
+	ui.PrintVerbose("Files: %d", len(meta.Files))
 
 	packagesDir := filepath.Join(extractDir, "packages")
 	macosDefaultsFile := filepath.Join(extractDir, "macos-defaults", "macos-defaults.json")
@@ -269,79 +250,59 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	readmePath := filepath.Join(extractDir, "README.txt")
+	// Dry run: show summary and exit
 	if restoreDryRun {
-		if content, err := os.ReadFile(readmePath); err == nil {
-			fmt.Println("\n📄 Backup README:")
-			fmt.Println(strings.Repeat("-", 50))
-			fmt.Println(string(content))
-			fmt.Println(strings.Repeat("-", 50))
+		fileCount := 0
+		for _, f := range meta.Files {
+			if !f.IsDir {
+				fileCount++
+			}
 		}
-	}
-
-	fmt.Println("\n📂 Files to be restored:")
-	fmt.Println(strings.Repeat("-", 80))
-
-	fileCount := 0
-	dirCount := 0
-
-	for _, fileInfo := range meta.Files {
-		if fileInfo.IsDir {
-			dirCount++
-			fmt.Printf("  [DIR]  %s\n", fileInfo.OriginalPath)
-		} else {
-			fileCount++
-			fmt.Printf("  [FILE] %s (%s)\n", fileInfo.OriginalPath, metadata.FormatSize(fileInfo.Size))
+		ui.PrintInfo("DRY RUN: Would restore %d files", fileCount)
+		if restoreVerbose {
+			for _, f := range meta.Files {
+				fmt.Printf("  %s\n", f.OriginalPath)
+			}
 		}
-	}
-
-	fmt.Println(strings.Repeat("-", 80))
-	fmt.Printf("Total: %d files, %d directories\n", fileCount, dirCount)
-
-	if restoreDryRun {
-		fmt.Println("\n✓ Dry run complete - no files were modified")
 		return nil
 	}
 
 	filesToRestore := meta.Files
 	if restoreEditor {
-		// Use editor-based pick/drop selection
-		selected, err := interactivePickFiles(meta.Files, tempDir)
+		// Interactive editor mode - pick files AND packages/actions
+		selected, editorOptions, err := interactivePickAll(meta.Files, tempDir, hasBrewfile, hasMAS, hasVSCode, hasNPM, hasMacOSDefaults, hasShellHistory)
 		if err != nil {
 			return fmt.Errorf("interactive selection failed: %w", err)
 		}
-		if len(selected) == 0 {
-			fmt.Println("No files selected. Restore cancelled.")
+		if len(selected) == 0 && editorOptions.RestoreFiles {
+			ui.PrintInfo("No files selected")
 			return nil
 		}
 		filesToRestore = selected
-		fmt.Printf("\n✓ Selected %d files to restore\n", len(filesToRestore))
-	} else if !restoreNoTUI && !restoreDryRun {
-		// Use TUI multi-select for file selection (only for smaller backups)
+		// Override options from editor
+		options = editorOptions
+	} else if !restoreNoTUI && options.RestoreFiles {
+		// Use TUI multi-select for file selection (only for smaller backups and if user chose to restore files)
 		if len(meta.Files) <= cfg.GetRestoreFilePickerThreshold() {
 			selected, err := tui.FilePickerForm(meta.Files)
 			if err != nil {
 				return fmt.Errorf("file selection failed: %w", err)
 			}
 			if len(selected) == 0 {
-				fmt.Println("No files selected. Restore cancelled.")
-				return nil
+				ui.PrintInfo("No files selected, but other restore options will continue")
+			} else {
+				filesToRestore = selected
 			}
-			filesToRestore = selected
-			fmt.Printf("\n✓ Selected %d files to restore\n", len(filesToRestore))
 		}
 	}
 
-	fmt.Println("\n" + strings.Repeat("=", 50))
-	fmt.Println("🚀 Executing restore actions...")
-	fmt.Println(strings.Repeat("=", 50))
+	// Start restore
+	ui.PrintVerbose("Restoring %d files...", len(filesToRestore))
 
 	successCount := 0
 	skippedCount := 0
 
 	if options.RestoreFiles {
-		fmt.Println("\n🔄 Restoring files...")
-
 		for _, fileInfo := range filesToRestore {
 			backupFilePath := filepath.Join(extractDir, fileInfo.BackupPath)
 			destPath := fileInfo.OriginalPath
@@ -353,37 +314,30 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 			if fileInfo.IsDir {
 				if err := arch.CopyDir(backupFilePath, destPath); err != nil {
-					fmt.Printf("  ⚠️  Failed to restore directory %s: %v\n", fileInfo.OriginalPath, err)
+					ui.PrintVerbose("Failed: %s - %v", fileInfo.OriginalPath, err)
 					skippedCount++
 					continue
 				}
 			} else {
-
 				if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-					fmt.Printf("  ⚠️  Failed to create parent directory for %s: %v\n", fileInfo.OriginalPath, err)
+					ui.PrintVerbose("Failed to create dir for %s", fileInfo.OriginalPath)
 					skippedCount++
 					continue
 				}
 
 				if err := arch.CopyFile(backupFilePath, destPath); err != nil {
-					fmt.Printf("  ⚠️  Failed to restore %s: %v\n", fileInfo.OriginalPath, err)
+					ui.PrintVerbose("Failed: %s - %v", fileInfo.OriginalPath, err)
 					skippedCount++
 					continue
 				}
 
-				if err := os.Chmod(destPath, fileInfo.Mode); err != nil {
-					fmt.Printf("  ⚠️  Failed to restore permissions for %s: %v\n", fileInfo.OriginalPath, err)
-				}
+				_ = os.Chmod(destPath, fileInfo.Mode)
 			}
 
-			fmt.Printf("  ✓ Restored %s\n", fileInfo.OriginalPath)
+			ui.PrintVerbose("Restored: %s", fileInfo.OriginalPath)
 		}
 
 		successCount = len(filesToRestore) - skippedCount
-		fmt.Printf("\n✓ Successfully restored: %d files\n", successCount)
-		if skippedCount > 0 {
-			fmt.Printf("⊘ Skipped: %d items\n", skippedCount)
-		}
 	}
 
 	homeDir, _ := os.UserHomeDir()
@@ -391,104 +345,136 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	persistentPackagesDir := filepath.Join(stashBackupsDir, "packages")
 
 	if _, err := os.Stat(packagesDir); err == nil {
-		fmt.Println("\n📦 Copying packages to persistent location...")
+		_ = os.MkdirAll(stashBackupsDir, 0755)
+		os.RemoveAll(persistentPackagesDir)
+		arch := archiver.NewArchiver()
+		_ = arch.CopyDir(packagesDir, persistentPackagesDir)
+	}
 
-		if err := os.MkdirAll(stashBackupsDir, 0755); err != nil {
-			fmt.Printf("  ⚠️  Failed to create %s: %v\n", stashBackupsDir, err)
-		} else {
+	if options.RestoreMacOSDefaults && fileExists(macosDefaultsFile) {
+		ui.PrintVerbose("Restoring macOS defaults...")
+		dm := defaults.NewDefaultsManager("")
+		if err := dm.RestoreAll(macosDefaultsFile); err != nil {
+			ui.PrintVerbose("macOS defaults failed: %v", err)
+		}
+	}
 
-			os.RemoveAll(persistentPackagesDir)
+	installer := packager.NewInstaller(false)
 
-			arch := archiver.NewArchiver()
-			if err := arch.CopyDir(packagesDir, persistentPackagesDir); err != nil {
-				fmt.Printf("  ⚠️  Failed to copy packages: %v\n", err)
+	if options.InstallHomebrew && fileExists(filepath.Join(persistentPackagesDir, "Brewfile")) {
+		brewfilePath := filepath.Join(persistentPackagesDir, "Brewfile")
+		
+		// Parse Brewfile into individual items
+		items, err := packager.ParseBrewfile(brewfilePath)
+		if err != nil {
+			ui.PrintWarning("Failed to parse Brewfile: %v", err)
+		} else if !restoreNoTUI && len(items) > 0 {
+			// Show package picker if not in no-TUI mode
+			var tuiItems []tui.BrewPackageItem
+			for _, item := range items {
+				tuiItems = append(tuiItems, tui.BrewPackageItem{
+					Type:    item.Type,
+					Name:    item.Name,
+					Label:   packager.FormatBrewfileItem(item),
+					RawLine: item.RawLine,
+				})
+			}
+			
+			selectedItems, err := tui.BrewPackagePickerForm(tuiItems)
+			if err != nil {
+				ui.PrintWarning("Package selection failed: %v", err)
+			} else if len(selectedItems) == 0 {
+				ui.PrintInfo("No packages selected, skipping Homebrew installation")
 			} else {
-				fmt.Printf("  ✓ Packages saved to %s\n", persistentPackagesDir)
+				// Create filtered Brewfile with selected packages
+				var filteredItems []packager.BrewfileItem
+				for _, tuiItem := range selectedItems {
+					filteredItems = append(filteredItems, packager.BrewfileItem{
+						Type:    tuiItem.Type,
+						Name:    tuiItem.Name,
+						RawLine: tuiItem.RawLine,
+					})
+				}
+				
+				tempBrewfile := filepath.Join(tempDir, "Brewfile.filtered")
+				if err := packager.CreateFilteredBrewfile(filteredItems, tempBrewfile); err != nil {
+					ui.PrintWarning("Failed to create filtered Brewfile: %v", err)
+				} else {
+					ui.PrintVerbose("Installing %d selected packages...", len(selectedItems))
+					if err := installer.InstallBrewPackages(tempBrewfile); err != nil {
+						ui.PrintWarning("Homebrew failed: %v", err)
+					}
+				}
+			}
+		} else {
+			// Install all packages (no-TUI mode or parse error)
+			ui.PrintVerbose("Installing Homebrew packages...")
+			if err := installer.InstallBrewPackages(brewfilePath); err != nil {
+				ui.PrintWarning("Homebrew failed: %v", err)
 			}
 		}
 	}
 
-	if options.RestoreMacOSDefaults && fileExists(macosDefaultsFile) {
-		fmt.Println("\n🔧 Restoring macOS defaults...")
-		dm := defaults.NewDefaultsManager("")
-		if err := dm.RestoreAll(macosDefaultsFile); err != nil {
-			fmt.Printf("  ⚠️  Failed to restore macOS defaults: %v\n", err)
-		}
-	}
-
-	// Create installer with progress bars
-	installer := packager.NewInstaller(false)
-
-	if options.InstallHomebrew && fileExists(filepath.Join(persistentPackagesDir, "Brewfile")) {
-		fmt.Println("\n🍺 Installing Homebrew packages...")
-		if err := installer.InstallBrewPackages(filepath.Join(persistentPackagesDir, "Brewfile")); err != nil {
-			fmt.Printf("  ⚠️  Failed to install Homebrew packages: %v\n", err)
-			fmt.Println("  💡 Run manually: brew bundle --file=" + filepath.Join(persistentPackagesDir, "Brewfile"))
-		} else {
-			fmt.Println("  ✓ Homebrew packages installed")
-		}
-	}
-
 	if options.InstallMAS && fileExists(filepath.Join(persistentPackagesDir, "mas-apps.txt")) {
-		fmt.Println("\n🏪 Installing Mac App Store apps...")
-		installed, err := installer.InstallMASApps(filepath.Join(persistentPackagesDir, "mas-apps.txt"))
-		if err != nil {
-			fmt.Printf("  ⚠️  %v\n", err)
-		} else {
-			fmt.Printf("  ✓ Installed %d Mac App Store apps\n", installed)
-		}
+		ui.PrintVerbose("Installing Mac App Store apps...")
+		_, _ = installer.InstallMASApps(filepath.Join(persistentPackagesDir, "mas-apps.txt"))
 	}
 
 	if options.InstallVSCode && fileExists(filepath.Join(persistentPackagesDir, "vscode-extensions.txt")) {
-		fmt.Println("\n💻 Installing VS Code extensions...")
-		installed, err := installer.InstallVSCodeExtensions(filepath.Join(persistentPackagesDir, "vscode-extensions.txt"))
-		if err != nil {
-			fmt.Printf("  ⚠️  %v\n", err)
-		} else {
-			fmt.Printf("  ✓ Installed %d VS Code extensions\n", installed)
-		}
+		ui.PrintVerbose("Installing VS Code extensions...")
+		_, _ = installer.InstallVSCodeExtensions(filepath.Join(persistentPackagesDir, "vscode-extensions.txt"))
 	}
 
 	if options.InstallNPM && fileExists(filepath.Join(persistentPackagesDir, "npm-global.txt")) {
-		fmt.Println("\n📦 NPM global packages...")
-		if err := installer.InstallNPMPackages(filepath.Join(persistentPackagesDir, "npm-global.txt")); err != nil {
-			fmt.Printf("  ⚠️  %v\n", err)
-		}
+		ui.PrintVerbose("Installing NPM packages...")
+		_ = installer.InstallNPMPackages(filepath.Join(persistentPackagesDir, "npm-global.txt"))
 	}
 
-	fmt.Println("\n" + strings.Repeat("=", 50))
-	fmt.Println("✅ Restore completed!")
-	fmt.Println(strings.Repeat("=", 50))
-
-	fmt.Println("\n💡 Next steps:")
-	if fileExists(filepath.Join(persistentPackagesDir, "non-brew-apps.txt")) {
-		fmt.Println("   • Review non-Homebrew apps: cat " + filepath.Join(persistentPackagesDir, "non-brew-apps.txt"))
+	// Final output
+	ui.PrintSuccess("Restored %d files", successCount)
+	if skippedCount > 0 {
+		ui.PrintDim("  Skipped: %d", skippedCount)
 	}
-	if options.RestoreMacOSDefaults {
-		fmt.Println("   • Logout/restart for macOS defaults to fully take effect")
-		fmt.Println("   • Or run: killall Dock Finder SystemUIServer")
-	}
-	if options.RestoreShellHistory {
-		fmt.Println("   • Restart terminal to load shell history")
-	}
-	fmt.Println("   • Test SSH connections and other credentials")
 
 	return nil
 }
 
-func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata.FileInfo, error) {
-
+func interactivePickAll(files []metadata.FileInfo, tempDir string, hasBrewfile, hasMAS, hasVSCode, hasNPM, hasMacOSDefaults, hasShellHistory bool) ([]metadata.FileInfo, RestoreOptions, error) {
 	planPath := filepath.Join(tempDir, "RESTORE_PLAN")
 
 	var content strings.Builder
 	content.WriteString("# Stash Restore Plan\n")
 	content.WriteString("# \n")
 	content.WriteString("# Commands:\n")
-	content.WriteString("#   pick = restore this file\n")
-	content.WriteString("#   drop = skip this file\n")
+	content.WriteString("#   pick = restore/install this item\n")
+	content.WriteString("#   drop = skip this item\n")
 	content.WriteString("# \n")
 	content.WriteString("# Lines starting with # are ignored\n")
 	content.WriteString("#\n\n")
+
+	// Add package installation options
+	content.WriteString("# === PACKAGES & SETTINGS ===\n\n")
+	
+	if hasBrewfile {
+		content.WriteString("pick [BREW] Install Homebrew packages (may take a while)\n")
+	}
+	if hasMAS {
+		content.WriteString("drop [MAS ] Install Mac App Store apps\n")
+	}
+	if hasVSCode {
+		content.WriteString("pick [CODE] Install VS Code extensions\n")
+	}
+	if hasNPM {
+		content.WriteString("drop [NPM ] Install NPM global packages\n")
+	}
+	if hasMacOSDefaults {
+		content.WriteString("pick [PREF] Restore macOS defaults (Dock, Finder, etc.)\n")
+	}
+	if hasShellHistory {
+		content.WriteString("pick [HIST] Restore shell history\n")
+	}
+
+	content.WriteString("\n# === FILES & DIRECTORIES ===\n\n")
 
 	for _, fileInfo := range files {
 		fileType := "FILE"
@@ -500,7 +486,7 @@ func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata
 	}
 
 	if err := os.WriteFile(planPath, []byte(content.String()), 0644); err != nil {
-		return nil, fmt.Errorf("failed to create restore plan: %w", err)
+		return nil, RestoreOptions{}, fmt.Errorf("failed to create restore plan: %w", err)
 	}
 
 	editor := os.Getenv("EDITOR")
@@ -513,7 +499,7 @@ func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata
 
 	fmt.Println("\n📝 Opening restore plan in editor...")
 	fmt.Printf("   Editor: %s\n", editor)
-	fmt.Println("   Change 'pick' to 'drop' to skip files")
+	fmt.Println("   Change 'pick' to 'drop' to skip items")
 	fmt.Println("   Save and close when done")
 
 	cmd := exec.Command(editor, planPath)
@@ -522,12 +508,12 @@ func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("editor failed: %w", err)
+		return nil, RestoreOptions{}, fmt.Errorf("editor failed: %w", err)
 	}
 
 	planContent, err := os.ReadFile(planPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read restore plan: %w", err)
+		return nil, RestoreOptions{}, fmt.Errorf("failed to read restore plan: %w", err)
 	}
 
 	fileMap := make(map[string]metadata.FileInfo)
@@ -536,6 +522,8 @@ func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata
 	}
 
 	var selected []metadata.FileInfo
+	options := RestoreOptions{RestoreFiles: true}
+	
 	scanner := bufio.NewScanner(strings.NewReader(string(planContent)))
 	lineNum := 0
 
@@ -548,7 +536,7 @@ func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata
 		}
 
 		parts := strings.Fields(line)
-		if len(parts) < 3 {
+		if len(parts) < 2 {
 			fmt.Printf("⚠️  Warning: skipping malformed line %d: %s\n", lineNum, line)
 			continue
 		}
@@ -556,6 +544,36 @@ func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata
 		action := parts[0]
 		if action != "pick" && action != "drop" {
 			fmt.Printf("⚠️  Warning: unknown action '%s' on line %d, treating as 'drop'\n", action, lineNum)
+			continue
+		}
+
+		itemType := strings.Trim(parts[1], "[]")
+		
+		// Handle package/settings items
+		switch itemType {
+		case "BREW":
+			options.InstallHomebrew = (action == "pick")
+			continue
+		case "MAS":
+			options.InstallMAS = (action == "pick")
+			continue
+		case "CODE":
+			options.InstallVSCode = (action == "pick")
+			continue
+		case "NPM":
+			options.InstallNPM = (action == "pick")
+			continue
+		case "PREF":
+			options.RestoreMacOSDefaults = (action == "pick")
+			continue
+		case "HIST":
+			options.RestoreShellHistory = (action == "pick")
+			continue
+		}
+
+		// Handle file items
+		if len(parts) < 3 {
+			fmt.Printf("⚠️  Warning: skipping malformed file line %d: %s\n", lineNum, line)
 			continue
 		}
 
@@ -580,10 +598,16 @@ func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to parse restore plan: %w", err)
+		return nil, RestoreOptions{}, fmt.Errorf("failed to parse restore plan: %w", err)
 	}
 
-	return selected, nil
+	return selected, options, nil
+}
+
+func interactivePickFiles(files []metadata.FileInfo, tempDir string) ([]metadata.FileInfo, error) {
+	// Kept for backwards compatibility - just calls the new function
+	selected, _, err := interactivePickAll(files, tempDir, false, false, false, false, false, false)
+	return selected, err
 }
 
 func promptRestoreOptions(hasBrewfile, hasMAS, hasVSCode, hasNPM, hasMacOSDefaults, hasShellHistory bool) (RestoreOptions, error) {

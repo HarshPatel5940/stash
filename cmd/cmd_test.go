@@ -39,11 +39,9 @@ func TestInitCmd(t *testing.T) {
 	io.Copy(&buf, r)
 	output := buf.String()
 
-	if !strings.Contains(output, "Created config") {
-		t.Error("Expected 'Created config' in output")
-	}
-	if !strings.Contains(output, "Generated encryption key") {
-		t.Error("Expected 'Generated encryption key' in output")
+	// New minimal output: "Initialized stash"
+	if !strings.Contains(output, "Initialized stash") {
+		t.Errorf("Expected 'Initialized stash' in output, got:\n%s", output)
 	}
 
 	configPath := filepath.Join(tmpHome, ".stash.yaml")
@@ -67,8 +65,9 @@ func TestInitCmd(t *testing.T) {
 	io.Copy(&buf2, r)
 	output2 := buf2.String()
 
-	if !strings.Contains(output2, "Config already exists") {
-		t.Error("Expected 'Config already exists' in second run")
+	// New minimal output: "Already initialized"
+	if !strings.Contains(output2, "Already initialized") {
+		t.Errorf("Expected 'Already initialized' in second run, got:\n%s", output2)
 	}
 }
 
@@ -114,7 +113,8 @@ func TestBackupCmd(t *testing.T) {
 	io.Copy(&buf, r)
 	output := buf.String()
 
-	if !strings.Contains(output, "Backup completed successfully") {
+	// New minimal output: "Backup created:"
+	if !strings.Contains(output, "Backup created") {
 		t.Errorf("Backup failed, output:\n%s", output)
 	}
 

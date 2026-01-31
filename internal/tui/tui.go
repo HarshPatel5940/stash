@@ -35,7 +35,7 @@ type AvailableOptions struct {
 // RestoreOptionsForm presents an interactive multi-select form for restore options
 func RestoreOptionsForm(available AvailableOptions) (RestoreOptions, error) {
 	opts := RestoreOptions{
-		RestoreFiles: true, // Always restore files
+		// All options start as false, will be set based on user selection
 	}
 
 	var selected []string
@@ -43,42 +43,42 @@ func RestoreOptionsForm(available AvailableOptions) (RestoreOptions, error) {
 	// Build options dynamically based on what's available
 	var options []huh.Option[string]
 
-	// Files are always included (shown but not selectable to skip)
-	options = append(options, huh.NewOption("Restore dotfiles, SSH keys, configs (always included)", "files").Selected(true))
+	// Files option (selected by default)
+	options = append(options, huh.NewOption("Dotfiles, SSH, configs", "files").Selected(true))
 
 	if available.HasMacOSDefaults {
-		options = append(options, huh.NewOption("Restore macOS defaults (Dock, Finder, trackpad)", "macos").Selected(true))
+		options = append(options, huh.NewOption("macOS defaults", "macos").Selected(true))
 	}
 
 	if available.HasShellHistory {
-		options = append(options, huh.NewOption("Restore shell history (.zsh_history, .bash_history)", "history").Selected(true))
+		options = append(options, huh.NewOption("Shell history", "history").Selected(true))
 	}
 
 	if available.HasBrewfile {
-		options = append(options, huh.NewOption("Install Homebrew packages (may take a while)", "brew").Selected(true))
+		options = append(options, huh.NewOption("Homebrew packages", "brew").Selected(true))
 	}
 
 	if available.HasMAS {
-		options = append(options, huh.NewOption("Install Mac App Store apps", "mas").Selected(false))
+		options = append(options, huh.NewOption("Mac App Store apps", "mas").Selected(false))
 	}
 
 	if available.HasVSCode {
-		options = append(options, huh.NewOption("Install VS Code extensions", "vscode").Selected(true))
+		options = append(options, huh.NewOption("VS Code extensions", "vscode").Selected(true))
 	}
 
 	if available.HasNPM {
-		options = append(options, huh.NewOption("Install NPM global packages", "npm").Selected(false))
+		options = append(options, huh.NewOption("NPM globals", "npm").Selected(false))
 	}
 
-	form := huh.NewForm(
+	form := ApplyTheme(huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title("Select what to restore").
-				Description("Use space to toggle, enter to confirm").
+				Description("Space to toggle, Enter to confirm").
 				Options(options...).
 				Value(&selected),
 		),
-	)
+	))
 
 	if err := form.Run(); err != nil {
 		return opts, err
@@ -141,16 +141,16 @@ func FilePickerForm(files []metadata.FileInfo) ([]metadata.FileInfo, error) {
 	// If there are too many files, show a summary and confirm
 	if len(files) > 50 {
 		var confirm bool
-		confirmForm := huh.NewForm(
+		confirmForm := ApplyTheme(huh.NewForm(
 			huh.NewGroup(
 				huh.NewConfirm().
 					Title(fmt.Sprintf("Restore all %d files?", len(files))).
-					Description("There are many files to restore. Select Yes to restore all, or No to pick individually.").
+					Description("Many files to restore. Yes = all, No = pick individually").
 					Affirmative("Yes, restore all").
 					Negative("No, let me pick").
 					Value(&confirm),
 			),
-		)
+		))
 
 		if err := confirmForm.Run(); err != nil {
 			return nil, err
@@ -161,16 +161,16 @@ func FilePickerForm(files []metadata.FileInfo) ([]metadata.FileInfo, error) {
 		}
 	}
 
-	form := huh.NewForm(
+	form := ApplyTheme(huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title("Select files to restore").
-				Description("Use space to toggle, enter to confirm. All files are selected by default.").
+				Description("Space to toggle, Enter to confirm").
 				Options(options...).
 				Height(20).
 				Value(&selected),
 		),
-	)
+	))
 
 	if err := form.Run(); err != nil {
 		return nil, err
@@ -215,15 +215,15 @@ func getCategoryFromPath(path string) string {
 
 // formatFileLabel creates a display label for a file
 func formatFileLabel(f metadata.FileInfo) string {
-	icon := "📄"
+	icon := "[F]"
 	if f.IsDir {
-		icon = "📁"
+		icon = "[D]"
 	}
 
-	// Get short path (last 2 components)
+	// Get short path
 	shortPath := f.OriginalPath
-	if len(shortPath) > 50 {
-		shortPath = "..." + shortPath[len(shortPath)-47:]
+	if len(shortPath) > 45 {
+		shortPath = "..." + shortPath[len(shortPath)-42:]
 	}
 
 	return fmt.Sprintf("%s %s (%s)", icon, shortPath, metadata.FormatSize(f.Size))
@@ -233,24 +233,24 @@ func formatFileLabel(f metadata.FileInfo) string {
 func ConfirmRestore(fileCount int, opts RestoreOptions) (bool, error) {
 	var confirm bool
 
-	description := fmt.Sprintf("Will restore %d files", fileCount)
+	description := fmt.Sprintf("%d files", fileCount)
 	if opts.InstallHomebrew {
-		description += ", install Homebrew packages"
+		description += " + Homebrew"
 	}
 	if opts.InstallVSCode {
-		description += ", install VS Code extensions"
+		description += " + VS Code"
 	}
 
-	form := huh.NewForm(
+	form := ApplyTheme(huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
 				Title("Proceed with restore?").
 				Description(description).
-				Affirmative("Yes, restore").
+				Affirmative("Yes").
 				Negative("Cancel").
 				Value(&confirm),
 		),
-	)
+	))
 
 	if err := form.Run(); err != nil {
 		return false, err
@@ -273,18 +273,90 @@ func SelectBackup(backups []string) (string, error) {
 		options = append(options, huh.NewOption(name, b))
 	}
 
-	form := huh.NewForm(
+	form := ApplyTheme(huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Select a backup to restore").
+				Title("Select backup").
 				Options(options...).
 				Value(&selected),
 		),
-	)
+	))
 
 	if err := form.Run(); err != nil {
 		return "", err
 	}
 
 	return selected, nil
+}
+
+// BrewPackagePickerForm presents an interactive multi-select form for picking brew packages
+func BrewPackagePickerForm(items []BrewPackageItem) ([]BrewPackageItem, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	// Ask if user wants to pick packages or install all
+	var pickIndividual bool
+	confirmForm := ApplyTheme(huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("Pick individual packages? (%d total)", len(items))).
+				Description("Yes = pick specific packages, No = install all").
+				Affirmative("Yes, let me choose").
+				Negative("No, install all").
+				Value(&pickIndividual),
+		),
+	))
+
+	if err := confirmForm.Run(); err != nil {
+		return nil, err
+	}
+
+	if !pickIndividual {
+		return items, nil
+	}
+
+	var selected []string
+	itemMap := make(map[string]BrewPackageItem)
+
+	// Build options for each package
+	var options []huh.Option[string]
+	for i, item := range items {
+		key := fmt.Sprintf("%d", i)
+		itemMap[key] = item
+		options = append(options, huh.NewOption(item.Label, key).Selected(true))
+	}
+
+	form := ApplyTheme(huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Select packages to install").
+				Description("Space to toggle, Enter to confirm, / to filter").
+				Options(options...).
+				Height(20).
+				Value(&selected),
+		),
+	))
+
+	if err := form.Run(); err != nil {
+		return nil, err
+	}
+
+	// Map selected keys back to BrewPackageItem
+	var result []BrewPackageItem
+	for _, key := range selected {
+		if item, ok := itemMap[key]; ok {
+			result = append(result, item)
+		}
+	}
+
+	return result, nil
+}
+
+// BrewPackageItem represents a brew package for selection
+type BrewPackageItem struct {
+	Type    string // "tap", "brew", "cask", "mas"
+	Name    string
+	Label   string // display label
+	RawLine string
 }

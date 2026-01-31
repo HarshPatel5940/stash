@@ -11,11 +11,13 @@ import (
 	"github.com/harshpatel5940/stash/internal/backuputil"
 	"github.com/harshpatel5940/stash/internal/config"
 	"github.com/harshpatel5940/stash/internal/metadata"
+	"github.com/harshpatel5940/stash/internal/ui"
 	"github.com/spf13/cobra"
 )
 
 var (
 	listDetails bool
+	listVerbose bool
 )
 
 var listCmd = &cobra.Command{
@@ -35,7 +37,8 @@ Use this to find which backup to restore.`,
 
 func init() {
 	rootCmd.AddCommand(listCmd)
-	listCmd.Flags().BoolVarP(&listDetails, "details", "d", false, "Show detailed metadata (may be slow for many backups)")
+	listCmd.Flags().BoolVarP(&listDetails, "details", "d", false, "Show detailed metadata (may be slow)")
+	listCmd.Flags().BoolVarP(&listVerbose, "verbose", "v", false, "Show verbose output")
 }
 
 type backupInfo struct {
@@ -48,6 +51,7 @@ type backupInfo struct {
 }
 
 func runList(cmd *cobra.Command, args []string) error {
+	ui.Verbose = listVerbose
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -56,9 +60,8 @@ func runList(cmd *cobra.Command, args []string) error {
 	cfg.ExpandPaths()
 
 	if _, err := os.Stat(cfg.BackupDir); os.IsNotExist(err) {
-		fmt.Printf("📁 No backups found\n")
-		fmt.Printf("\n💡 Backup directory doesn't exist: %s\n", cfg.BackupDir)
-		fmt.Println("💡 Run 'stash backup' to create your first backup")
+		ui.PrintInfo("No backups found")
+		ui.PrintDim("  Run: stash backup")
 		return nil
 	}
 
@@ -68,8 +71,8 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(backups) == 0 {
-		fmt.Printf("📁 No backups found in %s\n", cfg.BackupDir)
-		fmt.Println("\n💡 Run 'stash backup' to create your first backup")
+		ui.PrintInfo("No backups found in %s", cfg.BackupDir)
+		ui.PrintDim("  Run: stash backup")
 		return nil
 	}
 
@@ -77,49 +80,52 @@ func runList(cmd *cobra.Command, args []string) error {
 		return backups[i].ModTime.After(backups[j].ModTime)
 	})
 
-	fmt.Println("📦 Available Backups")
-	fmt.Println(strings.Repeat("=", 70))
-	fmt.Println()
-
-	for i, backup := range backups {
-		fmt.Printf("%d. %s\n", i+1, backup.Name)
-		fmt.Printf("   📅 Created: %s\n", backup.ModTime.Format("2006-01-02 15:04:05"))
-		fmt.Printf("   💾 Size: %s\n", metadata.FormatSize(backup.Size))
-
-		if backup.Encrypted {
-			fmt.Printf("   🔐 Encrypted: Yes\n")
-		} else {
-			fmt.Printf("   ⚠️  Encrypted: No\n")
-		}
-
-		if backup.Metadata != nil {
-			totalPackages := 0
-			for _, count := range backup.Metadata.PackageCounts {
-				totalPackages += count
-			}
-			fmt.Printf("   📊 Files: %d | Packages: %d\n",
-				len(backup.Metadata.Files),
-				totalPackages)
-		}
-
-		fmt.Printf("   📍 Path: %s\n", backup.Path)
-		fmt.Println()
+	// Build table
+	headers := []string{"NAME", "SIZE", "DATE"}
+	if listDetails {
+		headers = append(headers, "FILES")
 	}
 
-	fmt.Println(strings.Repeat("=", 70))
-	fmt.Printf("Total: %d backup(s) found\n", len(backups))
-	fmt.Println()
+	var rows [][]string
+	for _, backup := range backups {
+		// Shorten name for display
+		name := backup.Name
+		if len(name) > 35 {
+			name = name[:32] + "..."
+		}
 
-	if !listDetails {
-		fmt.Println("💡 Use --details to show file and package counts (may be slow)")
-		fmt.Println()
+		encIcon := ""
+		if !backup.Encrypted {
+			encIcon = " (!)"
+		}
+
+		row := []string{
+			name + encIcon,
+			metadata.FormatSize(backup.Size),
+			backup.ModTime.Format("2006-01-02 15:04"),
+		}
+
+		if listDetails && backup.Metadata != nil {
+			row = append(row, fmt.Sprintf("%d", len(backup.Metadata.Files)))
+		} else if listDetails {
+			row = append(row, "-")
+		}
+
+		rows = append(rows, row)
 	}
 
-	fmt.Println("💡 To restore a backup:")
-	fmt.Printf("   stash restore %s\n", backups[0].Path)
+	// Print table
+	ui.PrintTable(headers, rows)
+
+	// Summary
 	fmt.Println()
-	fmt.Println("💡 To preview what would be backed up:")
-	fmt.Println("   stash backup --dry-run")
+	ui.PrintDim("%d backup(s) in %s", len(backups), cfg.BackupDir)
+
+	// Verbose: show restore hint
+	if listVerbose {
+		fmt.Println()
+		ui.PrintDim("Restore: stash restore %s", backups[0].Name)
+	}
 
 	return nil
 }
@@ -163,7 +169,6 @@ func findBackups(backupDir string) ([]backupInfo, error) {
 			if err == nil {
 				backup.Metadata = meta
 			}
-			// Silently continue if metadata can't be read
 		}
 
 		backups = append(backups, backup)
@@ -173,6 +178,5 @@ func findBackups(backupDir string) ([]backupInfo, error) {
 }
 
 func readMetadataFromBackup(backupPath string) (*metadata.Metadata, error) {
-	// Use backuputil to extract metadata (handles both encrypted and unencrypted)
 	return backuputil.ExtractMetadata(backupPath, "")
 }
