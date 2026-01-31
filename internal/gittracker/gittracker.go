@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/harshpatel5940/stash/internal/security"
 )
 
 type GitRepo struct {
@@ -98,7 +100,7 @@ func (gt *GitTracker) scanDir(dir string, depth, maxDepth int) error {
 	}
 	gt.seenPaths[absPath] = true
 
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(security.CleanPath(dir))
 	if err != nil {
 		return err
 	}
@@ -112,7 +114,7 @@ func (gt *GitTracker) scanDir(dir string, depth, maxDepth int) error {
 			continue
 		}
 
-		fullPath := filepath.Join(dir, entry.Name())
+		fullPath := security.CleanPath(filepath.Join(dir, entry.Name()))
 
 		gitPath := filepath.Join(fullPath, ".git")
 		if _, err := os.Stat(gitPath); err == nil {

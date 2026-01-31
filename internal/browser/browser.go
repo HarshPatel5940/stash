@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/harshpatel5940/stash/internal/security"
 )
 
 type BrowserManager struct {
@@ -246,6 +248,10 @@ func (bm *BrowserManager) backupFirefoxProfiles(firefoxPath, outputDir string) i
 }
 
 func copyFile(src, dst string) error {
+	// Sanitize paths
+	src = security.CleanPath(src)
+	dst = security.CleanPath(dst)
+
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
@@ -260,6 +266,9 @@ func copyFile(src, dst string) error {
 }
 
 func copyDir(src, dst string) error {
+	// Sanitize paths
+	src = security.CleanPath(src)
+	dst = security.CleanPath(dst)
 
 	srcInfo, err := os.Stat(src)
 	if err != nil {
@@ -276,8 +285,8 @@ func copyDir(src, dst string) error {
 	}
 
 	for _, entry := range entries {
-		srcPath := filepath.Join(src, entry.Name())
-		dstPath := filepath.Join(dst, entry.Name())
+		srcPath := security.CleanPath(filepath.Join(src, entry.Name()))
+		dstPath := security.CleanPath(filepath.Join(dst, entry.Name()))
 
 		if entry.IsDir() {
 			if err := copyDir(srcPath, dstPath); err != nil {

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/harshpatel5940/stash/internal/security"
 )
 
 type Archiver struct {
@@ -153,6 +155,9 @@ func (a *Archiver) Extract(archivePath, destDir string) error {
 }
 
 func (a *Archiver) CopyFile(src, dest string) error {
+	// Sanitize paths
+	src = security.CleanPath(src)
+	dest = security.CleanPath(dest)
 
 	destDir := filepath.Dir(dest)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
@@ -192,6 +197,9 @@ func (a *Archiver) CopyDir(src, dest string) error {
 }
 
 func (a *Archiver) copyDirWithExclusions(src, dest string, exclusions []string) error {
+	// Sanitize paths
+	src = security.CleanPath(src)
+	dest = security.CleanPath(dest)
 
 	srcInfo, err := os.Lstat(src)
 	if err != nil {
@@ -219,8 +227,8 @@ func (a *Archiver) copyDirWithExclusions(src, dest string, exclusions []string) 
 			continue
 		}
 
-		srcPath := filepath.Join(src, entryName)
-		destPath := filepath.Join(dest, entryName)
+		srcPath := security.CleanPath(filepath.Join(src, entryName))
+		destPath := security.CleanPath(filepath.Join(dest, entryName))
 
 		info, err := os.Lstat(srcPath)
 		if err != nil {

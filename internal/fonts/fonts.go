@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/harshpatel5940/stash/internal/security"
 )
 
 type FontsManager struct {
@@ -145,6 +147,10 @@ func (fm *FontsManager) GetStats() (int, error) {
 }
 
 func copyFile(src, dst string) error {
+	// Sanitize paths
+	src = security.CleanPath(src)
+	dst = security.CleanPath(dst)
+
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
