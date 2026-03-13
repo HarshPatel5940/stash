@@ -7,11 +7,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var Version = "1.2.1"
+var Version = "1.3.0"
 
 var rootCmd = &cobra.Command{
 	Use:   "stash",
-	Short: "A Mac backup CLI tool",
+	Short: "A MacOS backup CLI tool to resume your work anywhere with ease.",
 	Long: `Stash is a simple Go CLI tool that helps you quickly reset your Mac
 and restore to a fresh state with all apps, configs, and secrets intact.
 
