@@ -18,8 +18,9 @@ func SanitizePath(basePath, userPath string) (string, error) {
 	fullPath := filepath.Join(cleanBase, cleanUser)
 	cleanFull := filepath.Clean(fullPath)
 
-	// Ensure the full path is within the base directory
-	if !strings.HasPrefix(cleanFull, cleanBase) {
+	// Use filepath.Rel to properly enforce path-segment boundaries
+	rel, err := filepath.Rel(cleanBase, cleanFull)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path traversal detected: %s escapes base %s", userPath, basePath)
 	}
 
@@ -31,6 +32,11 @@ func SanitizePath(basePath, userPath string) (string, error) {
 func ValidatePath(basePath, targetPath string) error {
 	cleanBase := filepath.Clean(basePath)
 	cleanTarget := filepath.Clean(targetPath)
+
+	// Allow equal paths (target can be the base itself)
+	if cleanBase == cleanTarget {
+		return nil
+	}
 
 	// Add trailing separator to base to avoid partial directory matches
 	if !strings.HasSuffix(cleanBase, string(filepath.Separator)) {
@@ -44,7 +50,8 @@ func ValidatePath(basePath, targetPath string) error {
 	return nil
 }
 
-// CleanPath returns a cleaned absolute path, preventing any relative path exploits.
+// CleanPath returns a cleaned path (relative or absolute).
+// For absolute path cleaning, use filepath.Abs before calling CleanPath.
 func CleanPath(path string) string {
 	return filepath.Clean(path)
 }

@@ -165,9 +165,12 @@ func findBackups(backupDir string) ([]backupInfo, error) {
 
 		// Load metadata if --details flag is set
 		if listDetails {
-			meta, err := readMetadataFromBackup(path)
+			cfg, err := config.Load()
 			if err == nil {
-				backup.Metadata = meta
+				meta, err := readMetadataFromBackup(path, cfg.EncryptionKey)
+				if err == nil {
+					backup.Metadata = meta
+				}
 			}
 		}
 
@@ -177,6 +180,6 @@ func findBackups(backupDir string) ([]backupInfo, error) {
 	return backups, nil
 }
 
-func readMetadataFromBackup(backupPath string) (*metadata.Metadata, error) {
-	return backuputil.ExtractMetadata(backupPath, "")
+func readMetadataFromBackup(backupPath string, keyPath string) (*metadata.Metadata, error) {
+	return backuputil.ExtractMetadata(backupPath, keyPath)
 }

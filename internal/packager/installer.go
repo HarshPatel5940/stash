@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/harshpatel5940/stash/internal/ui"
 )
@@ -70,8 +71,14 @@ func (i *Installer) InstallBrewPackages(brewfilePath string) error {
 		return fmt.Errorf("failed to start brew bundle: %w", err)
 	}
 
+	var stderrLines []string
+	var stderrMutex sync.Mutex
+	var wg sync.WaitGroup
+
 	// Parse stdout for progress
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -87,12 +94,15 @@ func (i *Installer) InstallBrewPackages(brewfilePath string) error {
 	}()
 
 	// Capture stderr for errors
-	var stderrBuf strings.Builder
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
-			stderrBuf.WriteString(line + "\n")
+			stderrMutex.Lock()
+			stderrLines = append(stderrLines, line)
+			stderrMutex.Unlock()
 			if i.verbose {
 				fmt.Printf("    [stderr] %s\n", line)
 			}
@@ -101,22 +111,25 @@ func (i *Installer) InstallBrewPackages(brewfilePath string) error {
 
 	if err := cmd.Wait(); err != nil {
 		bar.Finish()
+		// Wait for both scanners to finish before reading stderrLines
+		wg.Wait()
 		// Show last few lines of stderr if not verbose
-		if !i.verbose && stderrBuf.Len() > 0 {
-			lines := strings.Split(strings.TrimSpace(stderrBuf.String()), "\n")
+		if !i.verbose && len(stderrLines) > 0 {
 			// Show last 10 lines
-			start := len(lines) - 10
+			start := len(stderrLines) - 10
 			if start < 0 {
 				start = 0
 			}
 			fmt.Println("\n  Last errors from brew bundle:")
-			for _, line := range lines[start:] {
+			for _, line := range stderrLines[start:] {
 				fmt.Printf("    %s\n", line)
 			}
 		}
 		return fmt.Errorf("brew bundle failed: %w", err)
 	}
 
+	// Wait for scanners to finish
+	wg.Wait()
 	bar.Finish()
 	return nil
 }

@@ -274,8 +274,12 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("interactive selection failed: %w", err)
 		}
-		if len(selected) == 0 && editorOptions.RestoreFiles {
-			ui.PrintInfo("No files selected")
+		// Only exit if user selected no files AND editor doesn't install/restore packages/defaults/etc.
+		if len(selected) == 0 && editorOptions.RestoreFiles &&
+			!editorOptions.InstallHomebrew && !editorOptions.InstallMAS &&
+			!editorOptions.InstallVSCode && !editorOptions.InstallNPM &&
+			!editorOptions.RestoreMacOSDefaults && !editorOptions.RestoreShellHistory {
+			ui.PrintInfo("No restore options selected")
 			return nil
 		}
 		filesToRestore = selected
@@ -304,7 +308,18 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 	if options.RestoreFiles {
 		for _, fileInfo := range filesToRestore {
-			backupFilePath := filepath.Join(extractDir, fileInfo.BackupPath)
+			// Validate that the backup path doesn't escape the extraction directory
+			cleanedBackupPath := filepath.Clean(fileInfo.BackupPath)
+			backupFilePath := filepath.Join(extractDir, cleanedBackupPath)
+
+			// Ensure the resolved path stays within extractDir
+			rel, err := filepath.Rel(extractDir, backupFilePath)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+				ui.PrintVerbose("Skipping file with unsafe backup path: %s", fileInfo.BackupPath)
+				skippedCount++
+				continue
+			}
+
 			destPath := fileInfo.OriginalPath
 
 			if strings.HasPrefix(destPath, "~") {

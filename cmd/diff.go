@@ -54,14 +54,24 @@ func runDiff(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
+	// Use configured encryption key if not provided via flag
+	keyPath := diffDecryptKey
+	if keyPath == "" {
+		keyPath = cfg.EncryptionKey
+	}
+
 	// Perform the comparison
 	opts := diff.CompareOptions{
-		KeyPath: diffDecryptKey,
+		KeyPath: keyPath,
 	}
 	result, err := diff.CompareWithOptions(oldBackup, newBackup, opts)
 	if err != nil {
 		ui.PrintError("Failed to compare: %v", err)
-		ui.PrintDim("  Ensure key is at ~/.stash.key or use --decrypt-key")
+		if keyPath != "" {
+			ui.PrintDim("  Ensure key is at %s or use --decrypt-key to override", keyPath)
+		} else {
+			ui.PrintDim("  Ensure key is at ~/.stash.key or use --decrypt-key")
+		}
 		return err
 	}
 

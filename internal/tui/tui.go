@@ -113,18 +113,6 @@ func FilePickerForm(files []metadata.FileInfo) ([]metadata.FileInfo, error) {
 		return nil, nil
 	}
 
-	// Group files by category for better organization
-	type fileGroup struct {
-		category string
-		files    []metadata.FileInfo
-	}
-
-	groups := make(map[string][]metadata.FileInfo)
-	for _, f := range files {
-		category := getCategoryFromPath(f.OriginalPath)
-		groups[category] = append(groups[category], f)
-	}
-
 	var selected []string
 	fileMap := make(map[string]metadata.FileInfo)
 
