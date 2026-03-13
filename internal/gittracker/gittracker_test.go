@@ -103,3 +103,116 @@ func TestDirtyRepo(t *testing.T) {
 		t.Error("Expected repo to be dirty")
 	}
 }
+
+func TestGitRepoNeedsAttention(t *testing.T) {
+	tests := []struct {
+		name     string
+		repo     GitRepo
+		expected bool
+	}{
+		{
+			name:     "clean repo",
+			repo:     GitRepo{Dirty: false, UnpushedCount: 0},
+			expected: false,
+		},
+		{
+			name:     "dirty repo",
+			repo:     GitRepo{Dirty: true, UnpushedCount: 0},
+			expected: true,
+		},
+		{
+			name:     "unpushed commits",
+			repo:     GitRepo{Dirty: false, UnpushedCount: 3},
+			expected: true,
+		},
+		{
+			name:     "dirty with unpushed",
+			repo:     GitRepo{Dirty: true, UnpushedCount: 2},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.repo.NeedsAttention()
+			if result != tt.expected {
+				t.Errorf("NeedsAttention() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGitRepoGetStatusSummary(t *testing.T) {
+	tests := []struct {
+		name     string
+		repo     GitRepo
+		expected string
+	}{
+		{
+			name:     "clean repo",
+			repo:     GitRepo{Dirty: false, UnpushedCount: 0, Behind: 0},
+			expected: "clean",
+		},
+		{
+			name:     "dirty only",
+			repo:     GitRepo{Dirty: true, UnpushedCount: 0, Behind: 0},
+			expected: "uncommitted changes",
+		},
+		{
+			name:     "unpushed only",
+			repo:     GitRepo{Dirty: false, UnpushedCount: 3, Behind: 0},
+			expected: "3 unpushed",
+		},
+		{
+			name:     "behind only",
+			repo:     GitRepo{Dirty: false, UnpushedCount: 0, Behind: 2},
+			expected: "2 behind",
+		},
+		{
+			name:     "all issues",
+			repo:     GitRepo{Dirty: true, UnpushedCount: 3, Behind: 2},
+			expected: "uncommitted changes, 3 unpushed, 2 behind",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.repo.GetStatusSummary()
+			if result != tt.expected {
+				t.Errorf("GetStatusSummary() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGetReposNeedingAttention(t *testing.T) {
+	gt := NewGitTracker("")
+	gt.repos = []GitRepo{
+		{Path: "/clean", Dirty: false, UnpushedCount: 0},
+		{Path: "/dirty", Dirty: true, UnpushedCount: 0},
+		{Path: "/unpushed", Dirty: false, UnpushedCount: 5},
+		{Path: "/also-clean", Dirty: false, UnpushedCount: 0},
+	}
+
+	needsAttention := gt.GetReposNeedingAttention()
+
+	if len(needsAttention) != 2 {
+		t.Errorf("Expected 2 repos needing attention, got %d", len(needsAttention))
+	}
+
+	// Verify the correct repos are returned
+	paths := make(map[string]bool)
+	for _, r := range needsAttention {
+		paths[r.Path] = true
+	}
+
+	if !paths["/dirty"] {
+		t.Error("Expected /dirty in repos needing attention")
+	}
+	if !paths["/unpushed"] {
+		t.Error("Expected /unpushed in repos needing attention")
+	}
+	if paths["/clean"] {
+		t.Error("Did not expect /clean in repos needing attention")
+	}
+}

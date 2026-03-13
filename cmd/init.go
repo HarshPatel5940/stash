@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/harshpatel5940/stash/internal/config"
 	"github.com/harshpatel5940/stash/internal/crypto"
+	"github.com/harshpatel5940/stash/internal/ui"
 	"github.com/spf13/cobra"
 )
+
+var initVerbose bool
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -25,9 +27,12 @@ This will create:
 
 func init() {
 	rootCmd.AddCommand(initCmd)
+	initCmd.Flags().BoolVarP(&initVerbose, "verbose", "v", false, "Show detailed output")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	ui.Verbose = initVerbose
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("failed to get home directory: %w", err)
@@ -46,48 +51,49 @@ func runInit(cmd *cobra.Command, args []string) error {
 		keyExists = true
 	}
 
-	if configExists {
-		fmt.Printf("✓ Config already exists: %s\n", configPath)
-	} else {
+	// Create config if needed
+	if !configExists {
 		cfg := config.DefaultConfig()
 		if err := cfg.Save(configPath); err != nil {
 			return fmt.Errorf("failed to create config: %w", err)
 		}
-		fmt.Printf("✓ Created config: %s\n", configPath)
 	}
 
-	if keyExists {
-		fmt.Printf("✓ Encryption key already exists: %s\n", keyPath)
-	} else {
+	// Create key if needed
+	if !keyExists {
 		encryptor := crypto.NewEncryptor(keyPath)
 		if err := encryptor.GenerateKey(); err != nil {
 			return fmt.Errorf("failed to generate key: %w", err)
 		}
-		fmt.Printf("✓ Generated encryption key: %s\n", keyPath)
-
-		fmt.Println("\n" + strings.Repeat("=", 60))
-		fmt.Println(strings.Repeat("=", 60))
-		fmt.Printf("\n🔑 Key location: %s\n", keyPath)
-		fmt.Println("\n📋 Action items:")
-		fmt.Println("   1. Backup this key to a password manager (1Password, Bitwarden, etc.)")
-		fmt.Println("   2. Store a copy on a USB drive in a secure location")
-		fmt.Println("   3. Never commit this key to git or share it publicly")
-		fmt.Println("\n⚠️  WITHOUT THIS KEY, YOU CANNOT RESTORE YOUR BACKUPS!")
-		fmt.Println("⚠️  Losing this key means losing access to ALL encrypted backups!")
-		fmt.Println()
 	}
 
-	if !configExists || !keyExists {
-		fmt.Printf("✓ Initialization complete!\n")
-		fmt.Printf("\nNext steps:\n")
-		fmt.Printf("  1. SECURE YOUR KEY: Store %s in a password manager\n", keyPath)
-		fmt.Printf("  2. Review and customize ~/.stash.yaml if needed\n")
-		fmt.Printf("  3. Run 'stash list' to preview what will be backed up\n")
-		fmt.Printf("  4. Run 'stash backup' to create your first backup\n")
-		fmt.Printf("  5. Store backup files (.age) in cloud/external drive\n")
+	// Output
+	if configExists && keyExists {
+		ui.PrintSuccess("Already initialized")
+		ui.PrintDim("  Config: %s", configPath)
+		ui.PrintDim("  Key: %s", keyPath)
 	} else {
-		fmt.Printf("\n✓ Already initialized!\n")
-		fmt.Printf("\n💡 Remember: Keep %s safe!\n", keyPath)
+		ui.PrintSuccess("Initialized stash")
+		ui.PrintDim("  Config: %s", configPath)
+		ui.PrintDim("  Key: %s", keyPath)
+		ui.PrintWarning("IMPORTANT: Backup your key to a password manager!")
+	}
+
+	// Verbose output
+	if initVerbose {
+		ui.PrintDivider()
+		fmt.Println("Configuration includes:")
+		fmt.Println("  - Backup retention: 5 backups, auto-cleanup")
+		fmt.Println("  - Git scanning: ~/Documents, ~/Projects, ~/Code, etc.")
+		fmt.Println("  - Secrets: .ssh, .gnupg, .aws")
+		fmt.Println("  - Shell history: .zsh_history, .bash_history")
+		fmt.Println("  - macOS defaults: Dock, Finder, trackpad, etc.")
+		fmt.Println("  - Browser data: Chrome, Firefox, Safari")
+		ui.PrintDivider()
+		fmt.Println("Next steps:")
+		fmt.Printf("  1. Backup key: Store %s safely\n", keyPath)
+		fmt.Println("  2. Customize: stash config edit")
+		fmt.Println("  3. First backup: stash backup")
 	}
 
 	return nil

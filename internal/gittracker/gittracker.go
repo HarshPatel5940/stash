@@ -7,20 +7,28 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/harshpatel5940/stash/internal/security"
 )
 
 type GitRepo struct {
-	Path      string   `json:"path"`
-	RemoteURL string   `json:"remote_url"`
-	Branch    string   `json:"branch"`
-	Dirty     bool     `json:"dirty"`
-	Remotes   []string `json:"remotes"`
+	Path          string   `json:"path"`
+	RemoteURL     string   `json:"remote_url"`
+	Branch        string   `json:"branch"`
+	Dirty         bool     `json:"dirty"`
+	Remotes       []string `json:"remotes"`
+	Ahead         int      `json:"ahead"`          // Commits ahead of remote
+	Behind        int      `json:"behind"`         // Commits behind remote
+	HasUpstream   bool     `json:"has_upstream"`   // Has tracking branch configured
+	UnpushedCount int      `json:"unpushed_count"` // Number of unpushed commits (alias for Ahead)
 }
 
 type GitTracker struct {
 	outputDir string
 	repos     []GitRepo
 	seenPaths map[string]bool
+	maxDepth  int
+	skipDirs  map[string]bool
 }
 
 func NewGitTracker(outputDir string) *GitTracker {
@@ -28,13 +36,44 @@ func NewGitTracker(outputDir string) *GitTracker {
 		outputDir: outputDir,
 		repos:     []GitRepo{},
 		seenPaths: make(map[string]bool),
+		maxDepth:  5,
+		skipDirs:  defaultSkipDirs(),
+	}
+}
+
+// NewGitTrackerWithConfig creates a GitTracker with custom config
+func NewGitTrackerWithConfig(outputDir string, maxDepth int, skipDirs []string) *GitTracker {
+	gt := &GitTracker{
+		outputDir: outputDir,
+		repos:     []GitRepo{},
+		seenPaths: make(map[string]bool),
+		maxDepth:  maxDepth,
+		skipDirs:  make(map[string]bool),
+	}
+	for _, dir := range skipDirs {
+		gt.skipDirs[dir] = true
+	}
+	return gt
+}
+
+func defaultSkipDirs() map[string]bool {
+	return map[string]bool{
+		"node_modules": true,
+		".npm":         true,
+		".cache":       true,
+		"vendor":       true,
+		"venv":         true,
+		".venv":        true,
+		"dist":         true,
+		"build":        true,
+		"Library":      true,
+		"Applications": true,
 	}
 }
 
 func (gt *GitTracker) ScanDirectories(searchDirs []string) error {
 	for _, dir := range searchDirs {
-		if err := gt.scanDir(dir, 0, 5); err != nil {
-
+		if err := gt.scanDir(dir, 0, gt.maxDepth); err != nil {
 			continue
 		}
 	}
@@ -61,7 +100,7 @@ func (gt *GitTracker) scanDir(dir string, depth, maxDepth int) error {
 	}
 	gt.seenPaths[absPath] = true
 
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(security.CleanPath(dir))
 	if err != nil {
 		return err
 	}
@@ -71,24 +110,11 @@ func (gt *GitTracker) scanDir(dir string, depth, maxDepth int) error {
 			continue
 		}
 
-		skipDirs := map[string]bool{
-			"node_modules": true,
-			".npm":         true,
-			".cache":       true,
-			"vendor":       true,
-			"venv":         true,
-			".venv":        true,
-			"dist":         true,
-			"build":        true,
-			"Library":      true,
-			"Applications": true,
-		}
-
-		if skipDirs[entry.Name()] {
+		if gt.skipDirs[entry.Name()] {
 			continue
 		}
 
-		fullPath := filepath.Join(dir, entry.Name())
+		fullPath := security.CleanPath(filepath.Join(dir, entry.Name()))
 
 		gitPath := filepath.Join(fullPath, ".git")
 		if _, err := os.Stat(gitPath); err == nil {
@@ -151,7 +177,37 @@ func (gt *GitTracker) extractRepoInfo(repoPath string) (GitRepo, error) {
 		repo.Dirty = len(strings.TrimSpace(string(output))) > 0
 	}
 
+	// Check for upstream tracking and ahead/behind status
+	repo.Ahead, repo.Behind, repo.HasUpstream = gt.getAheadBehind(repoPath)
+	repo.UnpushedCount = repo.Ahead // Alias for convenience
+
 	return repo, nil
+}
+
+// getAheadBehind returns the number of commits ahead and behind the upstream
+func (gt *GitTracker) getAheadBehind(repoPath string) (ahead, behind int, hasUpstream bool) {
+	// Check if there's an upstream branch configured
+	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--abbrev-ref", "@{upstream}")
+	if err := cmd.Run(); err != nil {
+		// No upstream configured
+		return 0, 0, false
+	}
+
+	// Get ahead/behind counts
+	cmd = exec.Command("git", "-C", repoPath, "rev-list", "--left-right", "--count", "@{upstream}...HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, 0, true // Upstream exists but couldn't get counts
+	}
+
+	// Parse output: "behind\tahead"
+	parts := strings.Fields(strings.TrimSpace(string(output)))
+	if len(parts) >= 2 {
+		fmt.Sscanf(parts[0], "%d", &behind)
+		fmt.Sscanf(parts[1], "%d", &ahead)
+	}
+
+	return ahead, behind, true
 }
 
 func (gt *GitTracker) Save() error {
@@ -182,10 +238,23 @@ func (gt *GitTracker) Save() error {
 	for _, repo := range gt.repos {
 		text.WriteString(fmt.Sprintf("# Path: %s\n", repo.Path))
 		text.WriteString(fmt.Sprintf("# Branch: %s", repo.Branch))
+
+		// Add status indicators
+		var statusNotes []string
 		if repo.Dirty {
-			text.WriteString(" (uncommitted changes)")
+			statusNotes = append(statusNotes, "uncommitted changes")
+		}
+		if repo.UnpushedCount > 0 {
+			statusNotes = append(statusNotes, fmt.Sprintf("%d unpushed commit(s)", repo.UnpushedCount))
+		}
+		if repo.Behind > 0 {
+			statusNotes = append(statusNotes, fmt.Sprintf("%d commit(s) behind", repo.Behind))
+		}
+		if len(statusNotes) > 0 {
+			text.WriteString(fmt.Sprintf(" (%s)", strings.Join(statusNotes, ", ")))
 		}
 		text.WriteString("\n")
+
 		if repo.RemoteURL != "" {
 			text.WriteString(fmt.Sprintf("git clone %s\n", repo.RemoteURL))
 		} else {
@@ -234,4 +303,38 @@ func (gt *GitTracker) GetCount() int {
 
 func (gt *GitTracker) GetRepos() []GitRepo {
 	return gt.repos
+}
+
+// GetReposNeedingAttention returns repos with uncommitted or unpushed changes
+func (gt *GitTracker) GetReposNeedingAttention() []GitRepo {
+	var needsAttention []GitRepo
+	for _, repo := range gt.repos {
+		if repo.Dirty || repo.UnpushedCount > 0 {
+			needsAttention = append(needsAttention, repo)
+		}
+	}
+	return needsAttention
+}
+
+// NeedsAttention returns true if the repo has uncommitted or unpushed changes
+func (r *GitRepo) NeedsAttention() bool {
+	return r.Dirty || r.UnpushedCount > 0
+}
+
+// GetStatusSummary returns a human-readable status summary
+func (r *GitRepo) GetStatusSummary() string {
+	var parts []string
+	if r.Dirty {
+		parts = append(parts, "uncommitted changes")
+	}
+	if r.UnpushedCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d unpushed", r.UnpushedCount))
+	}
+	if r.Behind > 0 {
+		parts = append(parts, fmt.Sprintf("%d behind", r.Behind))
+	}
+	if len(parts) == 0 {
+		return "clean"
+	}
+	return strings.Join(parts, ", ")
 }

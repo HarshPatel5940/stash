@@ -45,7 +45,7 @@ stash backup
 stash list
 
 # Restore (copy .stash.key first!)
-stash restore backup.tar.gz.age --interactive
+stash restore backup.tar.gz.age
 ```
 
 ---
@@ -74,22 +74,33 @@ stash restore backup.tar.gz.age --interactive
 
 **Restore:**
 - `--dry-run` - Preview
-- `--interactive` - Pick/drop files (git-rebase style)
+- `--editor` - Pick/drop files and packages in editor (git-rebase style)
+- `--no-tui` - Use Y/n prompts instead of interactive TUI
 - `--no-decrypt` - Unencrypted backup
 
 ---
 
 ## Interactive Restore
 
-Opens editor with pick/drop list:
+By default, restore opens an interactive TUI to select what to restore:
+
+1. **Choose categories**: multi-select across dotfiles, Homebrew, VS Code, macOS defaults, etc.
+2. **Pick files**: if dotfiles selected, choose individual files to restore
+3. **Pick packages**: if Homebrew selected, choose to install all or pick individual packages
+
+Use `--editor` for a git-rebase style text editor instead:
 
 ```
+pick [BREW] Install Homebrew packages
+drop [MAS ] Install Mac App Store apps
+pick [CODE] Install VS Code extensions
+
 pick [FILE] ~/.bashrc (2.3 KB)
 drop [FILE] ~/.ssh/id_rsa (skip this)
 pick [DIR ] ~/.config
 ```
 
-Change `pick` → `drop` to skip files. Save & close.
+Change `pick` → `drop` to skip. Save & close.
 
 ---
 

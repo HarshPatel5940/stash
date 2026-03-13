@@ -20,10 +20,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.21"
-
-      - name: Download dependencies
-        run: go mod download
+          go-version-file: go.mod
+          cache: true
 
       - name: Run tests
         run: go test -v ./...
@@ -53,7 +51,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.21"
+          go-version-file: go.mod
+          cache: true
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6

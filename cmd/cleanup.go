@@ -14,6 +14,7 @@ var (
 	cleanupKeepCount int
 	cleanupMaxAge    int
 	cleanupDryRun    bool
+	cleanupVerbose   bool
 )
 
 var cleanupCmd = &cobra.Command{
@@ -21,12 +22,10 @@ var cleanupCmd = &cobra.Command{
 	Short: "Cleanup old backups",
 	Long: `Remove old backups based on count or age criteria.
 
-By default, keeps the 5 most recent backups and deletes older ones.
-
 Examples:
-  stash cleanup --keep 10          # Keep 10 most recent backups
-  stash cleanup --max-age 30       # Delete backups older than 30 days
-  stash cleanup --dry-run          # Preview what would be deleted`,
+  stash cleanup --keep 10       # Keep 10 most recent
+  stash cleanup --max-age 30    # Delete older than 30 days
+  stash cleanup --dry-run       # Preview deletions`,
 	RunE: runCleanup,
 }
 
@@ -34,16 +33,17 @@ func init() {
 	rootCmd.AddCommand(cleanupCmd)
 	cleanupCmd.Flags().IntVarP(&cleanupKeepCount, "keep", "k", 5, "Number of backups to keep (0 = disable)")
 	cleanupCmd.Flags().IntVarP(&cleanupMaxAge, "max-age", "a", 0, "Delete backups older than N days (0 = disable)")
-	cleanupCmd.Flags().BoolVar(&cleanupDryRun, "dry-run", false, "Preview what would be deleted without deleting")
+	cleanupCmd.Flags().BoolVar(&cleanupDryRun, "dry-run", false, "Preview deletions")
+	cleanupCmd.Flags().BoolVarP(&cleanupVerbose, "verbose", "v", false, "Show detailed output")
 }
 
 func runCleanup(cmd *cobra.Command, args []string) error {
+	ui.Verbose = cleanupVerbose
+
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
-
-	ui.PrintSectionHeader("🧹", "Backup Cleanup")
 
 	cm := cleanup.NewCleanupManager(cfg.BackupDir)
 
@@ -54,52 +54,43 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 
 	count := stats["count"].(int)
 	if count == 0 {
-		ui.PrintInfo("No backups found in %s", cfg.BackupDir)
+		ui.PrintInfo("No backups found")
 		return nil
 	}
 
 	totalSize := stats["total_size"].(int64)
-	ui.PrintInfo("Found %d backup(s), total size: %s", count, ui.FormatBytes(totalSize))
 
-	fmt.Println()
-	backups, _ := cm.ListBackups()
-	for i, backup := range backups {
-		if cleanupDryRun {
-
-			wouldDelete := false
-			if cleanupKeepCount > 0 && i >= cleanupKeepCount {
-				wouldDelete = true
-			}
+	// Verbose: show all backups
+	if cleanupVerbose {
+		backups, _ := cm.ListBackups()
+		for i, backup := range backups {
+			wouldDelete := cleanupKeepCount > 0 && i >= cleanupKeepCount
 			if wouldDelete {
-				fmt.Printf("  %s %s\n", ui.Error("✗"), backup)
+				fmt.Printf("  %s %s (delete)\n", ui.IconError, backup)
 			} else {
-				fmt.Printf("  %s %s\n", ui.Success("✓"), backup)
+				fmt.Printf("  %s %s (keep)\n", ui.IconSuccess, backup)
 			}
-		} else {
-			fmt.Printf("  • %s\n", backup)
 		}
+		fmt.Println()
 	}
 
+	// Dry run mode
 	if cleanupDryRun {
-		fmt.Println()
-		ui.PrintInfo("DRY RUN MODE - No files will be deleted")
+		toDelete := 0
+		if cleanupKeepCount > 0 && count > cleanupKeepCount {
+			toDelete = count - cleanupKeepCount
+		}
+		if toDelete > 0 {
+			ui.PrintInfo("DRY RUN: Would delete %d backup(s), keep %d", toDelete, cleanupKeepCount)
+		} else {
+			ui.PrintInfo("DRY RUN: Nothing to delete (keeping %d)", cleanupKeepCount)
+		}
+		return nil
 	}
 
 	var deleted int
 
 	if cleanupKeepCount > 0 {
-		fmt.Println()
-		if cleanupDryRun {
-			toDelete := count - cleanupKeepCount
-			if toDelete > 0 {
-				ui.PrintInfo("Would delete %d backup(s), keeping %d most recent", toDelete, cleanupKeepCount)
-			} else {
-				ui.PrintInfo("No cleanup needed (keeping %d backups)", cleanupKeepCount)
-			}
-			return nil
-		}
-
-		ui.PrintSectionHeader("🗑️", "Deleting old backups...")
 		deleted, err = cm.RotateByCount(cleanupKeepCount)
 		if err != nil {
 			return fmt.Errorf("cleanup failed: %w", err)
@@ -107,15 +98,7 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 	}
 
 	if cleanupMaxAge > 0 {
-		fmt.Println()
 		maxAge := time.Duration(cleanupMaxAge) * 24 * time.Hour
-
-		if cleanupDryRun {
-			ui.PrintInfo("Would delete backups older than %d days", cleanupMaxAge)
-			return nil
-		}
-
-		ui.PrintSectionHeader("🗑️", "Deleting old backups...")
 		ageDeleted, err := cm.RotateByAge(maxAge)
 		if err != nil {
 			return fmt.Errorf("cleanup failed: %w", err)
@@ -123,22 +106,15 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 		deleted += ageDeleted
 	}
 
-	fmt.Println()
-	ui.PrintDivider()
+	// Result
 	if deleted > 0 {
-		ui.PrintSuccess("Deleted %d old backup(s)", deleted)
-
 		newStats, _ := cm.GetStats()
-		newCount := newStats["count"].(int)
 		newSize := newStats["total_size"].(int64)
 		freed := totalSize - newSize
-
-		ui.PrintInfo("Remaining: %d backup(s), %s", newCount, ui.FormatBytes(newSize))
-		ui.PrintInfo("Space freed: %s", ui.FormatBytes(freed))
+		ui.PrintSuccess("Deleted %d backup(s), freed %s", deleted, ui.FormatBytes(freed))
 	} else {
-		ui.PrintInfo("No backups were deleted")
+		ui.PrintSuccess("No cleanup needed (%d backups)", count)
 	}
-	ui.PrintDivider()
 
 	return nil
 }

@@ -2,9 +2,12 @@ name: Test and Build
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -12,30 +15,28 @@ jobs:
     runs-on: macos-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.21'
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
-    - name: Download dependencies
-      run: go mod download
+      - name: Run tests
+        run: go test -v ./...
 
-    - name: Run tests
-      run: go test -v ./...
+      - name: Run go vet
+        run: go vet ./...
 
-    - name: Run go vet
-      run: go vet ./...
-
-    - name: Run go fmt check
-      run: |
-        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-          echo "The following files need formatting:"
-          gofmt -s -l .
-          exit 1
-        fi
+      - name: Check formatting
+        run: |
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "The following files need formatting:"
+            gofmt -s -l .
+            exit 1
+          fi
 
   build:
     name: Build
@@ -43,25 +44,26 @@ jobs:
     needs: test
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.21'
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
-    - name: Build binary
-      run: go build -v -o stash .
+      - name: Build binary
+        run: go build -v -o stash .
 
-    - name: Test binary
-      run: |
-        ./stash --version
-        ./stash --help
+      - name: Test binary
+        run: |
+          ./stash --version
+          ./stash --help
 
-    - name: Upload binary
-      uses: actions/upload-artifact@v4
-      with:
-        name: stash-macos
-        path: stash
-        retention-days: 7
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: stash-macos
+          path: stash
+          retention-days: 7

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/harshpatel5940/stash/internal/security"
+
 	"github.com/harshpatel5940/stash/internal/metadata"
 )
 
@@ -103,7 +105,7 @@ func (m *Manager) ListRecoverableBackups() ([]RecoveryState, error) {
 			continue
 		}
 
-		stateFile := filepath.Join(m.recoveryDir, file.Name())
+		stateFile := security.CleanPath(filepath.Join(m.recoveryDir, file.Name()))
 		data, err := os.ReadFile(stateFile)
 		if err != nil {
 			continue
@@ -279,7 +281,7 @@ func (m *Manager) CleanupOldRecoveryStates(maxAge time.Duration) error {
 		}
 
 		if info.ModTime().Before(cutoff) {
-			stateFile := filepath.Join(m.recoveryDir, file.Name())
+			stateFile := security.CleanPath(filepath.Join(m.recoveryDir, file.Name()))
 			os.Remove(stateFile)
 		}
 	}

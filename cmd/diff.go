@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/harshpatel5940/stash/internal/config"
 	"github.com/harshpatel5940/stash/internal/diff"
 	"github.com/harshpatel5940/stash/internal/ui"
 	"github.com/spf13/cobra"
@@ -12,6 +13,7 @@ import (
 var (
 	diffVerbose      bool
 	diffShowPackages bool
+	diffDecryptKey   string
 )
 
 var diffCmd = &cobra.Command{
@@ -23,11 +25,10 @@ Shows:
   - Files that were added, removed, or modified
   - Size changes for each category
   - Package manager changes (Homebrew, npm, etc.)
-  - Visual colored diff output
 
 Examples:
   stash diff backup-old.tar.gz.age backup-new.tar.gz.age
-  stash diff backup-2024-01-01.tar.gz.age backup-2024-01-15.tar.gz.age --verbose`,
+  stash diff backup-2024-01-01.tar.gz.age backup-2024-01-15.tar.gz.age -v`,
 	Args: cobra.ExactArgs(2),
 	RunE: runDiff,
 }
@@ -36,32 +37,51 @@ func init() {
 	rootCmd.AddCommand(diffCmd)
 	diffCmd.Flags().BoolVarP(&diffVerbose, "verbose", "v", false, "Show detailed file-by-file changes")
 	diffCmd.Flags().BoolVar(&diffShowPackages, "packages", true, "Show package manager changes")
+	diffCmd.Flags().StringVarP(&diffDecryptKey, "decrypt-key", "k", "", "Path to decryption key (default: ~/.stash.key)")
 }
 
 func runDiff(cmd *cobra.Command, args []string) error {
+	ui.Verbose = diffVerbose
+
 	oldBackup := args[0]
 	newBackup := args[1]
 
-	// Make paths absolute
 	oldBackup, _ = filepath.Abs(oldBackup)
 	newBackup, _ = filepath.Abs(newBackup)
 
-	ui.PrintSectionHeader("📊", "Comparing Backups")
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Use configured encryption key if not provided via flag
+	keyPath := diffDecryptKey
+	if keyPath == "" {
+		keyPath = cfg.EncryptionKey
+	}
 
 	// Perform the comparison
-	result, err := diff.Compare(oldBackup, newBackup)
+	opts := diff.CompareOptions{
+		KeyPath: keyPath,
+	}
+	result, err := diff.CompareWithOptions(oldBackup, newBackup, opts)
 	if err != nil {
-		ui.PrintError("Failed to compare backups: %v", err)
-		fmt.Println()
-		ui.PrintInfo("Note: To compare encrypted backups, metadata must be accessible")
-		ui.PrintInfo("Consider saving metadata alongside backups for easier comparison")
+		ui.PrintError("Failed to compare: %v", err)
+		if keyPath != "" {
+			ui.PrintDim("  Ensure key is at %s or use --decrypt-key to override", keyPath)
+		} else {
+			ui.PrintDim("  Ensure key is at ~/.stash.key or use --decrypt-key")
+		}
 		return err
 	}
 
-	// Print comparison header
-	ui.PrintComparisonHeader(filepath.Base(oldBackup), filepath.Base(newBackup), result.OldSize, result.NewSize)
+	// Minimal output: single line summary
+	if !result.HasChanges() {
+		ui.PrintSuccess("No changes")
+		return nil
+	}
 
-	// Print file changes summary
+	// Print file changes summary (always shown)
 	ui.PrintFileChanges(
 		result.GetAddedFilesCount(),
 		result.GetRemovedFilesCount(),
@@ -72,111 +92,86 @@ func runDiff(cmd *cobra.Command, args []string) error {
 		result.ModifiedSize,
 	)
 
-	// Show added files
-	if len(result.AddedFiles) > 0 {
-		fmt.Println(ui.Bold("Added Files:"))
-		limit := 10
-		if diffVerbose {
-			limit = len(result.AddedFiles)
-		}
-		for i, file := range result.AddedFiles {
-			if i >= limit {
-				fmt.Printf("  %s ... and %d more\n", ui.Info("▶"), len(result.AddedFiles)-limit)
-				break
+	// Verbose: detailed file lists
+	if diffVerbose {
+		// Added files
+		if len(result.AddedFiles) > 0 {
+			fmt.Printf("\n%s:\n", ui.Bold("Added"))
+			limit := cfg.GetDiffDisplayLimit()
+			for i, file := range result.AddedFiles {
+				if i >= limit {
+					ui.PrintDim("  ... and %d more", len(result.AddedFiles)-limit)
+					break
+				}
+				if !file.IsDir {
+					fmt.Printf("  %s %s (%s)\n", ui.Success("+"), file.OriginalPath, ui.FormatBytes(file.Size))
+				}
 			}
-			if !file.IsDir {
-				fmt.Printf("  %s %s (%s)\n", ui.Success("+"), file.OriginalPath, ui.FormatBytes(file.Size))
-			}
-		}
-		fmt.Println()
-	}
-
-	// Show removed files
-	if len(result.RemovedFiles) > 0 {
-		fmt.Println(ui.Bold("Removed Files:"))
-		limit := 10
-		if diffVerbose {
-			limit = len(result.RemovedFiles)
-		}
-		for i, file := range result.RemovedFiles {
-			if i >= limit {
-				fmt.Printf("  %s ... and %d more\n", ui.Info("▶"), len(result.RemovedFiles)-limit)
-				break
-			}
-			if !file.IsDir {
-				fmt.Printf("  %s %s (%s)\n", ui.Error("-"), file.OriginalPath, ui.FormatBytes(file.Size))
-			}
-		}
-		fmt.Println()
-	}
-
-	// Show modified files
-	if len(result.ModifiedFiles) > 0 {
-		fmt.Println(ui.Bold("Modified Files:"))
-		limit := 10
-		if diffVerbose {
-			limit = len(result.ModifiedFiles)
 		}
 
-		topModified := result.GetTopModifiedFiles(limit)
-		for _, change := range topModified {
-			sign := "+"
-			sizeDelta := change.SizeDelta
-			if sizeDelta < 0 {
-				sign = ""
+		// Removed files
+		if len(result.RemovedFiles) > 0 {
+			fmt.Printf("\n%s:\n", ui.Bold("Removed"))
+			limit := cfg.GetDiffDisplayLimit()
+			for i, file := range result.RemovedFiles {
+				if i >= limit {
+					ui.PrintDim("  ... and %d more", len(result.RemovedFiles)-limit)
+					break
+				}
+				if !file.IsDir {
+					fmt.Printf("  %s %s (%s)\n", ui.Error("-"), file.OriginalPath, ui.FormatBytes(file.Size))
+				}
 			}
-			fmt.Printf("  %s %-50s  %10s → %10s (%s%s)\n",
-				ui.Warning("~"),
-				truncatePath(change.Path, 50),
-				ui.FormatBytes(change.OldSize),
-				ui.FormatBytes(change.NewSize),
-				sign,
-				ui.FormatBytes(sizeDelta),
-			)
 		}
-		if !diffVerbose && len(result.ModifiedFiles) > limit {
-			fmt.Printf("  %s ... and %d more\n", ui.Info("▶"), len(result.ModifiedFiles)-limit)
-		}
-		fmt.Println()
-	}
 
-	// Show package changes
-	if diffShowPackages && len(result.PackageChanges) > 0 {
-		ui.PrintSectionHeader("📦", "PACKAGE CHANGES")
-		for pkgType, change := range result.PackageChanges {
-			sign := "+"
-			if change.Delta < 0 {
-				sign = ""
+		// Modified files
+		if len(result.ModifiedFiles) > 0 {
+			fmt.Printf("\n%s:\n", ui.Bold("Modified"))
+			limit := cfg.GetDiffDisplayLimit()
+			topModified := result.GetTopModifiedFiles(limit)
+			for _, change := range topModified {
+				sign := "+"
+				sizeDelta := change.SizeDelta
+				if sizeDelta < 0 {
+					sign = ""
+				}
+				fmt.Printf("  %s %s (%s%s)\n",
+					ui.Warning("~"),
+					truncateDiffPath(change.Path, 50),
+					sign,
+					ui.FormatBytes(sizeDelta),
+				)
 			}
-			delta := change.Delta
-			if delta < 0 {
-				delta = -delta
+			if len(result.ModifiedFiles) > limit {
+				ui.PrintDim("  ... and %d more", len(result.ModifiedFiles)-limit)
 			}
-
-			fmt.Printf("  %-15s %3d → %3d (%s%d)\n",
-				pkgType+":",
-				change.OldCount,
-				change.NewCount,
-				sign,
-				delta,
-			)
 		}
-		fmt.Println()
-	}
 
-	// Print summary
-	if !result.HasChanges() {
-		ui.PrintSuccess("No changes detected between backups")
-	} else {
-		fmt.Println(ui.Bold("Summary:"))
-		fmt.Println(result.Summary())
+		// Package changes
+		if diffShowPackages && len(result.PackageChanges) > 0 {
+			fmt.Printf("\n%s:\n", ui.Bold("Packages"))
+			for pkgType, change := range result.PackageChanges {
+				if change.Delta != 0 {
+					sign := "+"
+					if change.Delta < 0 {
+						sign = ""
+					}
+					fmt.Printf("  %s: %d → %d (%s%d)\n",
+						pkgType,
+						change.OldCount,
+						change.NewCount,
+						sign,
+						change.Delta,
+					)
+				}
+			}
+		}
 	}
 
 	return nil
 }
 
-// truncatePath truncates a path to fit within maxLen characters
-func truncatePath(path string, maxLen int) string {
+func truncateDiffPath(path string, maxLen int) string {
 	if len(path) <= maxLen {
 		return path
 	}

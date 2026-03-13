@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/harshpatel5940/stash/internal/security"
 )
 
 type BackupFile struct {
@@ -77,7 +79,7 @@ func (cm *CleanupManager) RotateByCount(keepCount int) (int, error) {
 
 	deleted := 0
 	for i := keepCount; i < len(backups); i++ {
-		if err := os.Remove(backups[i].Path); err != nil {
+		if err := os.Remove(security.CleanPath(backups[i].Path)); err != nil {
 			continue
 		}
 		deleted++
@@ -97,7 +99,7 @@ func (cm *CleanupManager) RotateByAge(maxAge time.Duration) (int, error) {
 
 	for _, backup := range backups {
 		if backup.ModTime.Before(cutoff) {
-			if err := os.Remove(backup.Path); err != nil {
+			if err := os.Remove(security.CleanPath(backup.Path)); err != nil {
 				continue
 			}
 			deleted++
@@ -119,7 +121,7 @@ func (cm *CleanupManager) RotateBySize(maxSizeBytes int64) (int, error) {
 	for _, backup := range backups {
 		if totalSize+backup.Size > maxSizeBytes {
 
-			if err := os.Remove(backup.Path); err != nil {
+			if err := os.Remove(security.CleanPath(backup.Path)); err != nil {
 				continue
 			}
 			deleted++
