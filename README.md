@@ -60,7 +60,7 @@ stash restore 1
 - **Dev Secrets**: `.env` and `.pem` files from your projects.
 - **Configs**: `~/.config` (with smart exclusions like `node_modules`).
 - **Packages**: Homebrew, npm, VS Code extensions, Mac App Store apps.
-- **Browser Data**: Bookmarks, extensions, settings (Chrome, Firefox, Safari, Arc).
+- **Browser Data**: Optional bookmarks/extensions/settings backup (disabled by default).
 - **Git Repos**: Tracks all your git repositories for easy re-cloning.
 - **System**: macOS defaults/preferences, custom fonts, shell history.
 
@@ -69,7 +69,7 @@ stash restore 1
 ## Flags
 
 **Backup:**
-- `--skip-browsers` - Skip browser data (saves space)
+- `--skip-browsers` - Force-skip browser data for this run
 - `--keep <n>` - Keep only last N backups (default: 5)
 - `-m, --message` - Add note/message to backup
 - `--dry-run` - Preview what will be backed up
@@ -135,6 +135,9 @@ additional_dotfiles:
 
 backup_dir: ~/stash-backups
 encryption_key: ~/.stash.key
+
+browsers:
+  enabled: true
 ```
 
 ---

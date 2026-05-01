@@ -224,10 +224,14 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		{"Kubernetes", func() error { return backupKubernetes(tempDir, meta) }},
 	}
 
-	if !backupSkipBrowsers {
+	if cfg.IsBrowsersEnabled() && !backupSkipBrowsers {
 		tasks = append(tasks, backupTask{"BrowserData", func() error { return backupBrowserData(tempDir, meta, incrMgr, doIncrementalBackup) }})
 	} else {
-		ui.PrintVerbose("Skipping browser data")
+		if backupSkipBrowsers {
+			ui.PrintVerbose("Skipping browser data (--skip-browsers)")
+		} else {
+			ui.PrintVerbose("Skipping browser data (disabled in config)")
+		}
 	}
 
 	var wg sync.WaitGroup

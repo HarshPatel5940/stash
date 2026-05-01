@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -58,7 +59,7 @@ var configShowCmd = &cobra.Command{
 var configEditCmd = &cobra.Command{
 	Use:   "edit",
 	Short: "Edit configuration with TUI or raw editor",
-	Long: `Opens an interactive TUI editor for common configuration settings.
+	Long: `Opens an interactive TUI editor for all configuration sections.
 
 Use --raw to edit the YAML directly in your default editor.
 The editor is determined by VISUAL/EDITOR, falling back to 'vim'.`,
@@ -117,8 +118,8 @@ func runConfigInit(cmd *cobra.Command, args []string) error {
 	fmt.Println("   • Git scanning: Documents, Projects, Code, Dev, workspace, github")
 	fmt.Println("   • Secret directories: .ssh, .gnupg, .aws")
 	fmt.Println("   • Shell history: .zsh_history, .bash_history, .zhistory")
-	fmt.Println("   • macOS defaults: Dock, Finder, and 12+ system preferences")
-	fmt.Println("   • Browser data: Chrome, Firefox, Safari, Arc (enabled)")
+	fmt.Println("   • macOS defaults: Dock, Finder, and 20+ system preferences")
+	fmt.Println("   • Browser data: skipped by default (enable in config)")
 	fmt.Println("   • Restore UI: Interactive TUI enabled")
 	fmt.Println()
 	fmt.Println("Customize your settings:")
@@ -183,6 +184,7 @@ func runConfigEdit(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	} else {
+		ui.PrintInfo("Guided mode is available, but --raw is recommended for full control: stash config edit --raw")
 		if err := runConfigEditTUI(configPath); err != nil {
 			return err
 		}
@@ -227,25 +229,28 @@ func runConfigEditTUI(configPath string) error {
 		return fmt.Errorf("failed to load configuration for editing: %w", err)
 	}
 
-	if cfg.Backup == nil {
-		cfg.Backup = &config.BackupConfig{KeepCount: 5, AutoCleanup: true}
-	}
-	if cfg.Restore == nil {
-		cfg.Restore = &config.RestoreConfig{UseTUI: true, FilePickerThreshold: 100}
-	}
-	if cfg.Git == nil {
-		cfg.Git = &config.GitConfig{MaxDepth: 5}
-	}
+	defaults := config.DefaultConfig()
+	ensureConfigSections(cfg, defaults)
 
 	backupDir := cfg.BackupDir
 	encryptionKey := cfg.EncryptionKey
 	keepCount := fmt.Sprintf("%d", cfg.Backup.KeepCount)
 	autoCleanup := cfg.Backup.AutoCleanup
+	incrementalEnabled := cfg.Incremental.Enabled
+	fullBackupInterval := cfg.Incremental.FullBackupInterval
+	autoMergeThreshold := fmt.Sprintf("%d", cfg.Incremental.AutoMergeThreshold)
 	restoreTUI := cfg.Restore.UseTUI
 	restoreThreshold := fmt.Sprintf("%d", cfg.GetRestoreFilePickerThreshold())
 	gitMaxDepth := fmt.Sprintf("%d", cfg.GetGitMaxDepth())
-	skipBrowsers := !cfg.IsBrowsersEnabled()
-	searchPaths := strings.Join(cfg.SearchPaths, ", ")
+	diffLimit := fmt.Sprintf("%d", cfg.GetDiffDisplayLimit())
+	browserEnabled := cfg.IsBrowsersEnabled()
+	macosEnabled := cfg.IsMacOSDefaultsEnabled()
+	cloudEnabled := cfg.Cloud.Enabled
+	cloudProvider := cfg.Cloud.Provider
+	cloudBucket := cfg.Cloud.Bucket
+	cloudRegion := cfg.Cloud.Region
+	cloudEndpoint := cfg.Cloud.Endpoint
+	cloudPrefix := cfg.Cloud.Prefix
 
 	form := stashTUI.ApplyTheme(huh.NewForm(
 		huh.NewGroup(
@@ -255,11 +260,25 @@ func runConfigEditTUI(configPath string) error {
 			huh.NewConfirm().Title("Auto cleanup old backups").Value(&autoCleanup),
 		),
 		huh.NewGroup(
-			huh.NewConfirm().Title("Use interactive restore TUI").Value(&restoreTUI),
-			huh.NewInput().Title("Restore file picker threshold").Description("Show file picker only below this file count").Value(&restoreThreshold),
+			huh.NewConfirm().Title("Enable incremental backups").Value(&incrementalEnabled),
+			huh.NewInput().Title("Full backup interval (incremental)").Description("Examples: 7d, 14d").Value(&fullBackupInterval),
+			huh.NewInput().Title("Auto-merge threshold").Description("Merge incrementals after this count").Value(&autoMergeThreshold),
 			huh.NewInput().Title("Git scan max depth").Value(&gitMaxDepth),
-			huh.NewConfirm().Title("Skip browser data in backup").Value(&skipBrowsers),
-			huh.NewInput().Title("Search paths (comma-separated)").Value(&searchPaths),
+			huh.NewInput().Title("Diff display limit").Value(&diffLimit),
+		),
+		huh.NewGroup(
+			huh.NewConfirm().Title("Enable restore TUI").Value(&restoreTUI),
+			huh.NewInput().Title("Restore file picker threshold").Description("Show file picker only below this file count").Value(&restoreThreshold),
+			huh.NewConfirm().Title("Enable browser data backup").Value(&browserEnabled),
+			huh.NewConfirm().Title("Enable macOS defaults backup").Value(&macosEnabled),
+			huh.NewConfirm().Title("Enable cloud sync settings").Value(&cloudEnabled),
+		),
+		huh.NewGroup(
+			huh.NewInput().Title("Cloud provider").Description("s3/minio/etc (used when cloud enabled)").Value(&cloudProvider),
+			huh.NewInput().Title("Cloud bucket").Value(&cloudBucket),
+			huh.NewInput().Title("Cloud region").Value(&cloudRegion),
+			huh.NewInput().Title("Cloud endpoint (optional)").Value(&cloudEndpoint),
+			huh.NewInput().Title("Cloud prefix (optional)").Value(&cloudPrefix),
 		),
 	))
 
@@ -279,20 +298,91 @@ func runConfigEditTUI(configPath string) error {
 	if err != nil {
 		return err
 	}
+	diffLimitInt, err := parsePositiveInt(diffLimit, "diff display limit")
+	if err != nil {
+		return err
+	}
+	autoMergeInt, err := parsePositiveInt(autoMergeThreshold, "auto-merge threshold")
+	if err != nil {
+		return err
+	}
 
 	cfg.BackupDir = strings.TrimSpace(backupDir)
 	cfg.EncryptionKey = strings.TrimSpace(encryptionKey)
 	cfg.Backup.KeepCount = keepCountInt
 	cfg.Backup.AutoCleanup = autoCleanup
+	cfg.Incremental.Enabled = incrementalEnabled
+	cfg.Incremental.FullBackupInterval = strings.TrimSpace(fullBackupInterval)
+	cfg.Incremental.AutoMergeThreshold = autoMergeInt
 	cfg.Restore.UseTUI = restoreTUI
 	cfg.Restore.FilePickerThreshold = restoreThresholdInt
 	cfg.Git.MaxDepth = gitMaxDepthInt
+	cfg.Diff.DisplayLimit = diffLimitInt
+	cfg.Browsers.Enabled = browserEnabled
+	cfg.MacOSDefaults.Enabled = macosEnabled
+	cfg.Cloud.Enabled = cloudEnabled
+	cfg.Cloud.Provider = strings.TrimSpace(cloudProvider)
+	cfg.Cloud.Bucket = strings.TrimSpace(cloudBucket)
+	cfg.Cloud.Region = strings.TrimSpace(cloudRegion)
+	cfg.Cloud.Endpoint = strings.TrimSpace(cloudEndpoint)
+	cfg.Cloud.Prefix = strings.TrimSpace(cloudPrefix)
 
-	if cfg.Browsers == nil {
-		cfg.Browsers = &config.BrowsersConfig{Enabled: true}
+	searchPaths, err := editStringListWithTUI("Search paths", "Select paths to scan for .env/.pem files", cfg.SearchPaths, defaults.SearchPaths)
+	if err != nil {
+		return err
 	}
-	cfg.Browsers.Enabled = !skipBrowsers
-	cfg.SearchPaths = parseCSVValues(searchPaths)
+	excludes, err := editStringListWithTUI("Exclude patterns", "Patterns to ignore during scans", cfg.Exclude, defaults.Exclude)
+	if err != nil {
+		return err
+	}
+	additionalDotfiles, err := editStringListWithTUI("Additional dotfiles", "Extra dotfiles to always include", cfg.AdditionalDotfiles, defaults.AdditionalDotfiles)
+	if err != nil {
+		return err
+	}
+	dotfileAdditional, err := editStringListWithTUI("Dotfiles.additional", "Extra dotfiles in dotfiles section", cfg.Dotfiles.Additional, defaults.Dotfiles.Additional)
+	if err != nil {
+		return err
+	}
+	dotfileIgnored, err := editStringListWithTUI("Dotfiles.ignored_dirs", "Ignored directories while scanning dotfiles", cfg.Dotfiles.IgnoredDirs, defaults.Dotfiles.IgnoredDirs)
+	if err != nil {
+		return err
+	}
+	secretDirs, err := editStringListWithTUI("Secret directories", "Sensitive directories to backup", cfg.Secrets.Directories, defaults.Secrets.Directories)
+	if err != nil {
+		return err
+	}
+	historyFiles, err := editStringListWithTUI("Shell history files", "Shell history files to include", cfg.ShellHistory.Files, defaults.ShellHistory.Files)
+	if err != nil {
+		return err
+	}
+	gitSearchDirs, err := editStringListWithTUI("Git search dirs", "Directories to scan for git repos", cfg.Git.SearchDirs, defaults.Git.SearchDirs)
+	if err != nil {
+		return err
+	}
+	gitSkipDirs, err := editStringListWithTUI("Git skip dirs", "Directory names to skip while scanning git repos", cfg.Git.SkipDirs, defaults.Git.SkipDirs)
+	if err != nil {
+		return err
+	}
+	macosDomains, err := editStringListWithTUI("macOS defaults domains", "Preference domains to backup and restore", cfg.MacOSDefaults.Domains, defaults.MacOSDefaults.Domains)
+	if err != nil {
+		return err
+	}
+	browserInclude, err := editStringListWithTUI("Browser include filter", "Leave empty for all supported browsers", cfg.Browsers.Include, defaults.Browsers.Include)
+	if err != nil {
+		return err
+	}
+
+	cfg.SearchPaths = searchPaths
+	cfg.Exclude = excludes
+	cfg.AdditionalDotfiles = additionalDotfiles
+	cfg.Dotfiles.Additional = dotfileAdditional
+	cfg.Dotfiles.IgnoredDirs = dotfileIgnored
+	cfg.Secrets.Directories = secretDirs
+	cfg.ShellHistory.Files = historyFiles
+	cfg.Git.SearchDirs = gitSearchDirs
+	cfg.Git.SkipDirs = gitSkipDirs
+	cfg.MacOSDefaults.Domains = macosDomains
+	cfg.Browsers.Include = browserInclude
 
 	if err := cfg.Save(configPath); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
@@ -311,16 +401,157 @@ func parsePositiveInt(raw, field string) (int, error) {
 	return value, nil
 }
 
-func parseCSVValues(raw string) []string {
-	parts := strings.Split(raw, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed != "" {
-			result = append(result, trimmed)
+func ensureConfigSections(cfg, defaults *config.Config) {
+	if cfg.Backup == nil {
+		cfg.Backup = defaults.Backup
+	}
+	if cfg.Restore == nil {
+		cfg.Restore = defaults.Restore
+	}
+	if cfg.Git == nil {
+		cfg.Git = defaults.Git
+	}
+	if cfg.Dotfiles == nil {
+		cfg.Dotfiles = defaults.Dotfiles
+	}
+	if cfg.Secrets == nil {
+		cfg.Secrets = defaults.Secrets
+	}
+	if cfg.ShellHistory == nil {
+		cfg.ShellHistory = defaults.ShellHistory
+	}
+	if cfg.MacOSDefaults == nil {
+		cfg.MacOSDefaults = defaults.MacOSDefaults
+	}
+	if cfg.Browsers == nil {
+		cfg.Browsers = defaults.Browsers
+	}
+	if cfg.Diff == nil {
+		cfg.Diff = defaults.Diff
+	}
+	if cfg.Incremental == nil {
+		cfg.Incremental = defaults.Incremental
+	}
+	if cfg.Cloud == nil {
+		cfg.Cloud = &config.CloudConfig{
+			Enabled:  false,
+			Provider: "s3",
+			Bucket:   "",
+			Region:   "us-east-1",
+			Endpoint: "",
+			Prefix:   "",
 		}
 	}
-	return result
+}
+
+func editStringListWithTUI(title, description string, current, suggestions []string) ([]string, error) {
+	candidates := mergeStringListCandidates(current, suggestions)
+	var selected []string
+
+	options := make([]huh.Option[string], 0, len(candidates))
+	currentSet := make(map[string]struct{}, len(current))
+	for _, v := range current {
+		trimmed := strings.TrimSpace(v)
+		if trimmed != "" {
+			currentSet[trimmed] = struct{}{}
+		}
+	}
+	for _, candidate := range candidates {
+		_, isSelected := currentSet[candidate]
+		options = append(options, huh.NewOption(candidate, candidate).Selected(isSelected))
+	}
+
+	if len(options) > 0 {
+		form := stashTUI.ApplyTheme(huh.NewForm(
+			huh.NewGroup(
+				huh.NewMultiSelect[string]().
+					Title(title).
+					Description(description + ". Space=toggle, Enter=continue").
+					Options(options...).
+					Height(12).
+					Value(&selected),
+			),
+		))
+		if err := form.Run(); err != nil {
+			return nil, fmt.Errorf("failed to edit %s: %w", title, err)
+		}
+	}
+
+	resultSet := map[string]struct{}{}
+	for _, item := range selected {
+		trimmed := strings.TrimSpace(item)
+		if trimmed != "" {
+			resultSet[trimmed] = struct{}{}
+		}
+	}
+
+	var addCustom bool
+	customPrompt := stashTUI.ApplyTheme(huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("Add custom entries for %s?", title)).
+				Affirmative("Yes").
+				Negative("No").
+				Value(&addCustom),
+		),
+	))
+	if err := customPrompt.Run(); err != nil {
+		return nil, fmt.Errorf("failed to prompt custom entries for %s: %w", title, err)
+	}
+
+	for addCustom {
+		var customValue string
+		var addAnother bool
+		customForm := stashTUI.ApplyTheme(huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title(fmt.Sprintf("%s custom entry", title)).
+					Description("Enter one value").
+					Value(&customValue),
+				huh.NewConfirm().
+					Title("Add another custom entry?").
+					Affirmative("Yes").
+					Negative("No").
+					Value(&addAnother),
+			),
+		))
+		if err := customForm.Run(); err != nil {
+			return nil, fmt.Errorf("failed to collect custom entries for %s: %w", title, err)
+		}
+		customValue = strings.TrimSpace(customValue)
+		if customValue != "" {
+			resultSet[customValue] = struct{}{}
+		}
+		addCustom = addAnother
+	}
+
+	result := make([]string, 0, len(resultSet))
+	for value := range resultSet {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func mergeStringListCandidates(primary, secondary []string) []string {
+	seen := map[string]struct{}{}
+	merged := make([]string, 0, len(primary)+len(secondary))
+	appendUnique := func(values []string) {
+		for _, value := range values {
+			trimmed := strings.TrimSpace(value)
+			if trimmed == "" {
+				continue
+			}
+			if _, exists := seen[trimmed]; exists {
+				continue
+			}
+			seen[trimmed] = struct{}{}
+			merged = append(merged, trimmed)
+		}
+	}
+	appendUnique(primary)
+	appendUnique(secondary)
+	return merged
 }
 
 func runConfigPath(cmd *cobra.Command, args []string) error {

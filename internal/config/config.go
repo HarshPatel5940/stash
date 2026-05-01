@@ -167,8 +167,16 @@ func DefaultConfig() *Config {
 				"NSGlobalDomain",
 				"com.apple.HIToolbox",
 				"com.apple.AppleMultitouchTrackpad",
+				"com.apple.driver.AppleBluetoothMultitouch.trackpad",
 				"com.apple.screencapture",
 				"com.apple.Safari",
+				"com.apple.controlcenter",
+				"com.apple.WindowManager",
+				"com.apple.screensaver",
+				"com.apple.desktopservices",
+				"com.apple.universalaccess",
+				"com.apple.loginwindow",
+				"com.apple.print.PrintingPrefs",
 				"com.apple.menuextra.clock",
 				"com.apple.systemuiserver",
 				"com.apple.spaces",
@@ -179,7 +187,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Browsers: &BrowsersConfig{
-			Enabled: true,
+			Enabled: false,
 			Include: []string{}, // Empty means all supported browsers
 		},
 		Restore: &RestoreConfig{
@@ -337,7 +345,7 @@ func (c *Config) IsBrowsersEnabled() bool {
 	if c.Browsers != nil {
 		return c.Browsers.Enabled
 	}
-	return true
+	return false
 }
 
 // GetRestoreFilePickerThreshold returns the file count threshold for TUI picker
