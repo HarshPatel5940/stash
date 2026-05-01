@@ -34,6 +34,7 @@ func Execute() {
 }
 
 func init() {
-
 	rootCmd.CompletionOptions.DisableDefaultCmd = false
+	rootCmd.SilenceErrors = true
+	rootCmd.SilenceUsage = true
 }

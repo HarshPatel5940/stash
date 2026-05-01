@@ -95,9 +95,13 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		ui.PrintInfo("DRY RUN - No changes will be made")
 	}
 
-	if restoreDecryptKey == "" {
+	keyPath := strings.TrimSpace(restoreDecryptKey)
+	if keyPath == "" {
+		keyPath = strings.TrimSpace(cfg.EncryptionKey)
+	}
+	if keyPath == "" {
 		homeDir, _ := os.UserHomeDir()
-		restoreDecryptKey = filepath.Join(homeDir, ".stash.key")
+		keyPath = filepath.Join(homeDir, ".stash.key")
 	}
 
 	tempDir, err := os.MkdirTemp("", "stash-restore-*")
@@ -113,14 +117,14 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		ui.PrintVerbose("Skipping decryption")
 	} else if strings.HasSuffix(backupFile, ".age") {
 		ui.PrintVerbose("Decrypting...")
-		encryptor := crypto.NewEncryptor(restoreDecryptKey)
+		encryptor := crypto.NewEncryptor(keyPath)
 		if !encryptor.KeyExists() {
-			return fmt.Errorf("decryption key not found: %s", restoreDecryptKey)
+			return fmt.Errorf("decryption key not found: %s\nRestore the original key from your password manager, or pass it explicitly with: stash restore %s -k /path/to/key", keyPath, backupRef)
 		}
 
 		archivePath = filepath.Join(tempDir, "backup.tar.gz")
 		if err := encryptor.Decrypt(backupFile, archivePath); err != nil {
-			return fmt.Errorf("failed to decrypt: %w", err)
+			return wrapDecryptError(err, backupRef, keyPath)
 		}
 	} else {
 		archivePath = backupFile
@@ -164,10 +168,10 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 			var chainArchivePath string
 			if strings.HasSuffix(backupPath, ".age") {
-				encryptor := crypto.NewEncryptor(restoreDecryptKey)
+				encryptor := crypto.NewEncryptor(keyPath)
 				chainArchivePath = filepath.Join(tempDir, fmt.Sprintf("backup-%d.tar.gz", i))
 				if err := encryptor.Decrypt(backupPath, chainArchivePath); err != nil {
-					return fmt.Errorf("failed to decrypt %s: %w", filepath.Base(backupPath), err)
+					return wrapDecryptError(err, filepath.Base(backupPath), keyPath)
 				}
 			} else {
 				chainArchivePath = backupPath
@@ -718,4 +722,13 @@ func runCommand(name string, args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func wrapDecryptError(err error, backupRef, keyPath string) error {
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "identity did not match any of the recipients") ||
+		strings.Contains(errMsg, "incorrect identity for recipient block") {
+		return fmt.Errorf("failed to decrypt %s with key %s\nThis backup was encrypted with a different key.\nRestore the original key from your password manager and retry:\n  stash restore %s -k /path/to/original.stash.key", backupRef, keyPath, backupRef)
+	}
+	return fmt.Errorf("failed to decrypt: %w", err)
 }
