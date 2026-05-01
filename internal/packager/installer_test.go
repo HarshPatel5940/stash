@@ -160,3 +160,23 @@ func TestNewInstaller(t *testing.T) {
 		t.Error("NewInstaller(true) returned nil")
 	}
 }
+
+func TestParseBrewFailedPackages(t *testing.T) {
+	lines := []string{
+		"Error: Something else",
+		"Failed to fetch claude-code, gimp, wine-stable",
+		"Failed to fetch gimp",
+	}
+
+	got := parseBrewFailedPackages(lines)
+	want := []string{"claude-code", "gimp", "wine-stable"}
+
+	if len(got) != len(want) {
+		t.Fatalf("parseBrewFailedPackages returned %d items, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("parseBrewFailedPackages[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}

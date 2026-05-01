@@ -130,6 +130,16 @@ func TestGitRepoNeedsAttention(t *testing.T) {
 			repo:     GitRepo{Dirty: true, UnpushedCount: 2},
 			expected: true,
 		},
+		{
+			name: "no upstream with remote",
+			repo: GitRepo{
+				Dirty:         false,
+				UnpushedCount: 0,
+				HasUpstream:   false,
+				Remotes:       []string{"origin git@github.com:example/repo.git"},
+			},
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -172,6 +182,16 @@ func TestGitRepoGetStatusSummary(t *testing.T) {
 			name:     "all issues",
 			repo:     GitRepo{Dirty: true, UnpushedCount: 3, Behind: 2},
 			expected: "uncommitted changes, 3 unpushed, 2 behind",
+		},
+		{
+			name: "no upstream",
+			repo: GitRepo{
+				Dirty:         false,
+				UnpushedCount: 0,
+				HasUpstream:   false,
+				Remotes:       []string{"origin git@github.com:example/repo.git"},
+			},
+			expected: "no upstream",
 		},
 	}
 

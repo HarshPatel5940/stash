@@ -35,6 +35,7 @@ var (
 	backupNoEncrypt    bool
 	backupDryRun       bool
 	backupVerbose      bool
+	backupMessage      string
 	backupKeepCount    int
 	backupSkipBrowsers bool
 	backupIncremental  bool
@@ -67,6 +68,7 @@ func init() {
 	rootCmd.AddCommand(backupCmd)
 	backupCmd.Flags().StringVarP(&backupOutput, "output", "o", "", "Output directory for backups (default: ~/stash-backups)")
 	backupCmd.Flags().StringVarP(&backupEncryptKey, "encrypt-key", "k", "", "Path to encryption key (default: ~/.stash.key)")
+	backupCmd.Flags().StringVarP(&backupMessage, "message", "m", "", "Optional backup note/message")
 	backupCmd.Flags().BoolVar(&backupNoEncrypt, "no-encrypt", false, "Skip encryption (not recommended)")
 	backupCmd.Flags().BoolVar(&backupDryRun, "dry-run", false, "Preview what would be backed up without creating backup")
 	backupCmd.Flags().BoolVarP(&backupVerbose, "verbose", "v", false, "Show detailed output for debugging")
@@ -157,6 +159,9 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	}
 
 	meta := metadata.New()
+	if note := strings.TrimSpace(backupMessage); note != "" {
+		meta.SetNote(note)
+	}
 
 	// Set backup type in metadata
 	if doIncrementalBackup {
@@ -387,6 +392,9 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		meta.GetFileCount(),
 		backupType,
 	)
+	if note := strings.TrimSpace(meta.Note); note != "" {
+		ui.PrintDim("  Note: %s", note)
+	}
 
 	// Verbose: detailed statistics
 	if backupVerbose {
@@ -427,6 +435,10 @@ func runBackup(cmd *cobra.Command, args []string) error {
 			}
 			registry.RegisterBackup(backupName, finalPath, regType, baseBackup)
 			_ = registry.Save()
+		}
+
+		if note := strings.TrimSpace(meta.Note); note != "" {
+			_ = saveBackupNote(backupName, note)
 		}
 	}
 

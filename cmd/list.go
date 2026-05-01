@@ -3,13 +3,12 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/harshpatel5940/stash/internal/backuputil"
 	"github.com/harshpatel5940/stash/internal/config"
+	"github.com/harshpatel5940/stash/internal/incremental"
 	"github.com/harshpatel5940/stash/internal/metadata"
 	"github.com/harshpatel5940/stash/internal/ui"
 	"github.com/spf13/cobra"
@@ -26,12 +25,10 @@ var listCmd = &cobra.Command{
 	Long: `Lists all backups found in the backup directory.
 
 Shows backup details including:
-  - Backup timestamp
-  - File size
-  - Encryption status
-  - Number of files backed up (with --details)
-
-Use this to find which backup to restore.`,
+  - Numeric ID for quick restore
+  - File size and date
+  - Note/type summary in INFO column
+  - Number of files backed up (with --details)`,
 	RunE: runList,
 }
 
@@ -43,6 +40,7 @@ func init() {
 
 type backupInfo struct {
 	Path      string
+	Index     int
 	Name      string
 	Size      int64
 	ModTime   time.Time
@@ -65,7 +63,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	backups, err := findBackups(cfg.BackupDir)
+	backups, err := collectBackups(cfg.BackupDir)
 	if err != nil {
 		return fmt.Errorf("failed to find backups: %w", err)
 	}
@@ -76,19 +74,23 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	sort.Slice(backups, func(i, j int) bool {
-		return backups[i].ModTime.After(backups[j].ModTime)
-	})
+	registry, _ := incremental.LoadRegistry()
 
 	// Build table
-	headers := []string{"NAME", "SIZE", "DATE"}
+	headers := []string{"ID", "NAME", "SIZE", "DATE", "INFO"}
 	if listDetails {
-		headers = append(headers, "FILES")
+		headers = append(headers, "FILES", "HOST")
 	}
 
 	var rows [][]string
 	for _, backup := range backups {
-		// Shorten name for display
+		if listDetails {
+			meta, err := readMetadataFromBackup(backup.Path, cfg.EncryptionKey)
+			if err == nil {
+				backup.Metadata = meta
+			}
+		}
+
 		name := backup.Name
 		if len(name) > 35 {
 			name = name[:32] + "..."
@@ -100,86 +102,74 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 
 		row := []string{
+			fmt.Sprintf("%d", backup.Index),
 			name + encIcon,
 			metadata.FormatSize(backup.Size),
 			backup.ModTime.Format("2006-01-02 15:04"),
+			buildListInfo(backup, registry),
 		}
 
-		if listDetails && backup.Metadata != nil {
-			row = append(row, fmt.Sprintf("%d", len(backup.Metadata.Files)))
-		} else if listDetails {
-			row = append(row, "-")
+		if listDetails {
+			if backup.Metadata != nil {
+				host := backup.Metadata.Hostname
+				if host == "" {
+					host = "-"
+				}
+				row = append(row, fmt.Sprintf("%d", len(backup.Metadata.Files)), host)
+			} else {
+				row = append(row, "-", "-")
+			}
 		}
 
 		rows = append(rows, row)
 	}
 
-	// Print table
 	ui.PrintTable(headers, rows)
 
-	// Summary
 	fmt.Println()
 	ui.PrintDim("%d backup(s) in %s", len(backups), cfg.BackupDir)
 
-	// Verbose: show restore hint
 	if listVerbose {
 		fmt.Println()
-		ui.PrintDim("Restore: stash restore %s", backups[0].Name)
+		ui.PrintDim("Restore latest: stash restore 1")
 	}
 
 	return nil
 }
 
-func findBackups(backupDir string) ([]backupInfo, error) {
-	var backups []backupInfo
-
-	entries, err := os.ReadDir(backupDir)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		name := entry.Name()
-
-		if !strings.HasSuffix(name, ".tar.gz.age") && !strings.HasSuffix(name, ".tar.gz") {
-			continue
-		}
-
-		path := filepath.Join(backupDir, name)
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		backup := backupInfo{
-			Path:      path,
-			Name:      name,
-			Size:      info.Size(),
-			ModTime:   info.ModTime(),
-			Encrypted: strings.HasSuffix(name, ".age"),
-		}
-
-		// Load metadata if --details flag is set
-		if listDetails {
-			cfg, err := config.Load()
-			if err == nil {
-				meta, err := readMetadataFromBackup(path, cfg.EncryptionKey)
-				if err == nil {
-					backup.Metadata = meta
-				}
-			}
-		}
-
-		backups = append(backups, backup)
-	}
-
-	return backups, nil
-}
-
 func readMetadataFromBackup(backupPath string, keyPath string) (*metadata.Metadata, error) {
 	return backuputil.ExtractMetadata(backupPath, keyPath)
+}
+
+func buildListInfo(backup backupInfo, registry *incremental.BackupRegistry) string {
+	var parts []string
+
+	if registry != nil {
+		if entry, ok := registry.GetBackup(normalizeBackupKey(backup.Name)); ok && entry.BackupType != "" {
+			parts = append(parts, entry.BackupType)
+		}
+	}
+
+	if note, err := loadBackupNote(backup.Name); err == nil && note != "" {
+		parts = append(parts, truncateInfo(note, 40))
+	}
+
+	if !backup.Encrypted {
+		parts = append(parts, "plain")
+	}
+
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, " | ")
+}
+
+func truncateInfo(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
 }

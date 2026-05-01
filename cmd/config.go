@@ -5,8 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/harshpatel5940/stash/internal/config"
+	stashTUI "github.com/harshpatel5940/stash/internal/tui"
 	"github.com/harshpatel5940/stash/internal/ui"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -53,11 +57,11 @@ var configShowCmd = &cobra.Command{
 
 var configEditCmd = &cobra.Command{
 	Use:   "edit",
-	Short: "Edit configuration in default editor",
-	Long: `Opens the configuration file in your default editor.
+	Short: "Edit configuration with TUI or raw editor",
+	Long: `Opens an interactive TUI editor for common configuration settings.
 
-The editor is determined by the EDITOR environment variable,
-falling back to 'vim' if not set.`,
+Use --raw to edit the YAML directly in your default editor.
+The editor is determined by VISUAL/EDITOR, falling back to 'vim'.`,
 	RunE: runConfigEdit,
 }
 
@@ -70,6 +74,7 @@ var configPathCmd = &cobra.Command{
 
 var (
 	configForce bool
+	configRaw   bool
 )
 
 func init() {
@@ -81,6 +86,7 @@ func init() {
 	configCmd.AddCommand(configPathCmd)
 
 	configInitCmd.Flags().BoolVarP(&configForce, "force", "f", false, "Overwrite existing configuration file")
+	configEditCmd.Flags().BoolVar(&configRaw, "raw", false, "Open raw YAML in editor instead of TUI")
 }
 
 func runConfigInit(cmd *cobra.Command, args []string) error {
@@ -169,21 +175,17 @@ func runConfigEdit(cmd *cobra.Command, args []string) error {
 		fmt.Println(ui.Success("✓") + " Created new configuration file")
 	}
 
-	// Determine editor
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vim"
-	}
-
-	// Open in editor
-	editorCmd := exec.Command(editor, configPath)
-	editorCmd.Stdin = os.Stdin
-	editorCmd.Stdout = os.Stdout
-	editorCmd.Stderr = os.Stderr
-
-	fmt.Printf("Opening %s in %s...\n", configPath, editor)
-	if err := editorCmd.Run(); err != nil {
-		return fmt.Errorf("failed to open editor: %w", err)
+	if configRaw || !stashTUI.IsTerminal() {
+		if !configRaw && !stashTUI.IsTerminal() {
+			ui.PrintInfo("Terminal is not interactive, using raw editor mode")
+		}
+		if err := openConfigInEditor(configPath); err != nil {
+			return err
+		}
+	} else {
+		if err := runConfigEditTUI(configPath); err != nil {
+			return err
+		}
 	}
 
 	// Validate the edited config
@@ -196,6 +198,129 @@ func runConfigEdit(cmd *cobra.Command, args []string) error {
 
 	ui.PrintSuccess("Configuration saved successfully!")
 	return nil
+}
+
+func openConfigInEditor(configPath string) error {
+	editor := os.Getenv("VISUAL")
+	if editor == "" {
+		editor = os.Getenv("EDITOR")
+	}
+	if editor == "" {
+		editor = "vim"
+	}
+
+	editorCmd := exec.Command(editor, configPath)
+	editorCmd.Stdin = os.Stdin
+	editorCmd.Stdout = os.Stdout
+	editorCmd.Stderr = os.Stderr
+
+	fmt.Printf("Opening %s in %s...\n", configPath, editor)
+	if err := editorCmd.Run(); err != nil {
+		return fmt.Errorf("failed to open editor: %w", err)
+	}
+	return nil
+}
+
+func runConfigEditTUI(configPath string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration for editing: %w", err)
+	}
+
+	if cfg.Backup == nil {
+		cfg.Backup = &config.BackupConfig{KeepCount: 5, AutoCleanup: true}
+	}
+	if cfg.Restore == nil {
+		cfg.Restore = &config.RestoreConfig{UseTUI: true, FilePickerThreshold: 100}
+	}
+	if cfg.Git == nil {
+		cfg.Git = &config.GitConfig{MaxDepth: 5}
+	}
+
+	backupDir := cfg.BackupDir
+	encryptionKey := cfg.EncryptionKey
+	keepCount := fmt.Sprintf("%d", cfg.Backup.KeepCount)
+	autoCleanup := cfg.Backup.AutoCleanup
+	restoreTUI := cfg.Restore.UseTUI
+	restoreThreshold := fmt.Sprintf("%d", cfg.GetRestoreFilePickerThreshold())
+	gitMaxDepth := fmt.Sprintf("%d", cfg.GetGitMaxDepth())
+	skipBrowsers := !cfg.IsBrowsersEnabled()
+	searchPaths := strings.Join(cfg.SearchPaths, ", ")
+
+	form := stashTUI.ApplyTheme(huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().Title("Backup directory").Value(&backupDir),
+			huh.NewInput().Title("Encryption key path").Value(&encryptionKey),
+			huh.NewInput().Title("Backups to keep").Description("Rotate old backups by count").Value(&keepCount),
+			huh.NewConfirm().Title("Auto cleanup old backups").Value(&autoCleanup),
+		),
+		huh.NewGroup(
+			huh.NewConfirm().Title("Use interactive restore TUI").Value(&restoreTUI),
+			huh.NewInput().Title("Restore file picker threshold").Description("Show file picker only below this file count").Value(&restoreThreshold),
+			huh.NewInput().Title("Git scan max depth").Value(&gitMaxDepth),
+			huh.NewConfirm().Title("Skip browser data in backup").Value(&skipBrowsers),
+			huh.NewInput().Title("Search paths (comma-separated)").Value(&searchPaths),
+		),
+	))
+
+	if err := form.Run(); err != nil {
+		return fmt.Errorf("failed to run config TUI: %w", err)
+	}
+
+	keepCountInt, err := parsePositiveInt(keepCount, "backup keep count")
+	if err != nil {
+		return err
+	}
+	restoreThresholdInt, err := parsePositiveInt(restoreThreshold, "restore file picker threshold")
+	if err != nil {
+		return err
+	}
+	gitMaxDepthInt, err := parsePositiveInt(gitMaxDepth, "git max depth")
+	if err != nil {
+		return err
+	}
+
+	cfg.BackupDir = strings.TrimSpace(backupDir)
+	cfg.EncryptionKey = strings.TrimSpace(encryptionKey)
+	cfg.Backup.KeepCount = keepCountInt
+	cfg.Backup.AutoCleanup = autoCleanup
+	cfg.Restore.UseTUI = restoreTUI
+	cfg.Restore.FilePickerThreshold = restoreThresholdInt
+	cfg.Git.MaxDepth = gitMaxDepthInt
+
+	if cfg.Browsers == nil {
+		cfg.Browsers = &config.BrowsersConfig{Enabled: true}
+	}
+	cfg.Browsers.Enabled = !skipBrowsers
+	cfg.SearchPaths = parseCSVValues(searchPaths)
+
+	if err := cfg.Save(configPath); err != nil {
+		return fmt.Errorf("failed to save configuration: %w", err)
+	}
+	return nil
+}
+
+func parsePositiveInt(raw, field string) (int, error) {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", field, err)
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("%s must be greater than zero", field)
+	}
+	return value, nil
+}
+
+func parseCSVValues(raw string) []string {
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 func runConfigPath(cmd *cobra.Command, args []string) error {
