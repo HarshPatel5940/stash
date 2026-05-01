@@ -44,8 +44,11 @@ stash backup
 # List backups
 stash list
 
-# Restore (copy .stash.key first!)
-stash restore backup.tar.gz.age
+# Show metadata + note
+stash info 1
+
+# Restore by ID or name (copy .stash.key first!)
+stash restore 1
 ```
 
 ---
@@ -57,7 +60,7 @@ stash restore backup.tar.gz.age
 - **Dev Secrets**: `.env` and `.pem` files from your projects.
 - **Configs**: `~/.config` (with smart exclusions like `node_modules`).
 - **Packages**: Homebrew, npm, VS Code extensions, Mac App Store apps.
-- **Browser Data**: Bookmarks, extensions, settings (Chrome, Firefox, Safari, Arc).
+- **Browser Data**: Optional bookmarks/extensions/settings backup (disabled by default).
 - **Git Repos**: Tracks all your git repositories for easy re-cloning.
 - **System**: macOS defaults/preferences, custom fonts, shell history.
 
@@ -66,8 +69,9 @@ stash restore backup.tar.gz.age
 ## Flags
 
 **Backup:**
-- `--skip-browsers` - Skip browser data (saves space)
+- `--skip-browsers` - Force-skip browser data for this run
 - `--keep <n>` - Keep only last N backups (default: 5)
+- `-m, --message` - Add note/message to backup
 - `--dry-run` - Preview what will be backed up
 - `--verbose` - Detailed output
 - `--no-encrypt` - Skip encryption (not recommended)
@@ -77,6 +81,14 @@ stash restore backup.tar.gz.age
 - `--editor` - Pick/drop files and packages in editor (git-rebase style)
 - `--no-tui` - Use Y/n prompts instead of interactive TUI
 - `--no-decrypt` - Unencrypted backup
+
+**Info:**
+- `stash info <id|name>` - Show backup metadata and note
+- `stash info <id|name> -m "..."` - Update note for a backup
+
+**Config:**
+- `stash config edit` - Interactive TUI editor for common settings
+- `stash config edit --raw` - Open raw YAML in VISUAL/EDITOR/vim
 
 ---
 
@@ -123,6 +135,9 @@ additional_dotfiles:
 
 backup_dir: ~/stash-backups
 encryption_key: ~/.stash.key
+
+browsers:
+  enabled: true
 ```
 
 ---

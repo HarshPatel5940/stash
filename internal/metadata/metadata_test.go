@@ -308,6 +308,14 @@ func TestSetChangedFilesOnly(t *testing.T) {
 	}
 }
 
+func TestSetNote(t *testing.T) {
+	meta := New()
+	meta.SetNote("  macbook setup baseline  ")
+	if meta.Note != "macbook setup baseline" {
+		t.Errorf("Expected trimmed note, got %q", meta.Note)
+	}
+}
+
 func TestIsIncremental(t *testing.T) {
 	meta := New()
 	if meta.IsIncremental() {

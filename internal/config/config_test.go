@@ -109,3 +109,13 @@ func TestConfigExcludePatterns(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultBrowserBackupDisabled(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Browsers == nil {
+		t.Fatal("Browsers config should not be nil")
+	}
+	if cfg.Browsers.Enabled {
+		t.Error("Browser backup should be disabled by default")
+	}
+}

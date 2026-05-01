@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var Version = "1.2.1"
+var Version = "1.4.0"
 
 var rootCmd = &cobra.Command{
 	Use:   "stash",
@@ -34,6 +34,7 @@ func Execute() {
 }
 
 func init() {
-
 	rootCmd.CompletionOptions.DisableDefaultCmd = false
+	rootCmd.SilenceErrors = true
+	rootCmd.SilenceUsage = true
 }

@@ -42,6 +42,7 @@ type Metadata struct {
 	Timestamp        time.Time                  `json:"timestamp"`
 	Hostname         string                     `json:"hostname"`
 	Username         string                     `json:"username"`
+	Note             string                     `json:"note,omitempty"`
 	Files            []FileInfo                 `json:"files"`
 	PackageCounts    map[string]int             `json:"package_counts"`
 	BackupSize       int64                      `json:"backup_size"`
@@ -336,6 +337,13 @@ func (m *Metadata) SetChangedFilesOnly(changedOnly bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ChangedFilesOnly = changedOnly
+}
+
+// SetNote sets an optional user-provided backup note.
+func (m *Metadata) SetNote(note string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Note = strings.TrimSpace(note)
 }
 
 // IsIncremental returns true if this is an incremental backup

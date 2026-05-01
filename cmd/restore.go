@@ -40,7 +40,7 @@ type RestoreOptions struct {
 }
 
 var restoreCmd = &cobra.Command{
-	Use:   "restore <backup-file>",
+	Use:   "restore <backup-id|name>",
 	Short: "Restore from a backup",
 	Long: `Restores files from an encrypted backup to their original locations.
 
@@ -76,35 +76,32 @@ func init() {
 
 func runRestore(cmd *cobra.Command, args []string) error {
 	ui.Verbose = restoreVerbose
-	backupFile := args[0]
+	backupRef := args[0]
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
+	cfg.ExpandPaths()
 
-	if _, err := os.Stat(backupFile); os.IsNotExist(err) {
-		if !filepath.IsAbs(backupFile) {
-			homeDir, _ := os.UserHomeDir()
-			altPath := filepath.Join(homeDir, "stash-backups", backupFile)
-			if _, err := os.Stat(altPath); err == nil {
-				backupFile = altPath
-				ui.PrintVerbose("Using: %s", altPath)
-			} else {
-				return fmt.Errorf("backup not found: %s", args[0])
-			}
-		} else {
-			return fmt.Errorf("backup not found: %s", backupFile)
-		}
+	resolvedBackup, err := resolveBackupInput(backupRef, cfg.BackupDir)
+	if err != nil {
+		return err
 	}
+	backupFile := resolvedBackup.Path
+	ui.PrintVerbose("Using backup: %s", backupFile)
 
 	if restoreDryRun {
 		ui.PrintInfo("DRY RUN - No changes will be made")
 	}
 
-	if restoreDecryptKey == "" {
+	keyPath := strings.TrimSpace(restoreDecryptKey)
+	if keyPath == "" {
+		keyPath = strings.TrimSpace(cfg.EncryptionKey)
+	}
+	if keyPath == "" {
 		homeDir, _ := os.UserHomeDir()
-		restoreDecryptKey = filepath.Join(homeDir, ".stash.key")
+		keyPath = filepath.Join(homeDir, ".stash.key")
 	}
 
 	tempDir, err := os.MkdirTemp("", "stash-restore-*")
@@ -120,14 +117,14 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		ui.PrintVerbose("Skipping decryption")
 	} else if strings.HasSuffix(backupFile, ".age") {
 		ui.PrintVerbose("Decrypting...")
-		encryptor := crypto.NewEncryptor(restoreDecryptKey)
+		encryptor := crypto.NewEncryptor(keyPath)
 		if !encryptor.KeyExists() {
-			return fmt.Errorf("decryption key not found: %s", restoreDecryptKey)
+			return fmt.Errorf("decryption key not found: %s\nRestore the original key from your password manager, or pass it explicitly with: stash restore %s -k /path/to/key", keyPath, backupRef)
 		}
 
 		archivePath = filepath.Join(tempDir, "backup.tar.gz")
 		if err := encryptor.Decrypt(backupFile, archivePath); err != nil {
-			return fmt.Errorf("failed to decrypt: %w", err)
+			return wrapDecryptError(err, backupRef, keyPath)
 		}
 	} else {
 		archivePath = backupFile
@@ -171,10 +168,10 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 			var chainArchivePath string
 			if strings.HasSuffix(backupPath, ".age") {
-				encryptor := crypto.NewEncryptor(restoreDecryptKey)
+				encryptor := crypto.NewEncryptor(keyPath)
 				chainArchivePath = filepath.Join(tempDir, fmt.Sprintf("backup-%d.tar.gz", i))
 				if err := encryptor.Decrypt(backupPath, chainArchivePath); err != nil {
-					return fmt.Errorf("failed to decrypt %s: %w", filepath.Base(backupPath), err)
+					return wrapDecryptError(err, filepath.Base(backupPath), keyPath)
 				}
 			} else {
 				chainArchivePath = backupPath
@@ -203,6 +200,8 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	hasMacOSDefaults := fileExists(macosDefaultsFile)
 	hasShellHistory := fileExists(filepath.Join(extractDir, "shell-history"))
 
+	useNoTUI := restoreNoTUI || !cfg.IsRestoreTUIEnabled()
+
 	var options RestoreOptions
 	if !restoreDryRun {
 		available := tui.AvailableOptions{
@@ -214,7 +213,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 			HasShellHistory:  hasShellHistory,
 		}
 
-		if restoreNoTUI {
+		if useNoTUI {
 			// Use simple Y/n prompts
 			var err error
 			options, err = promptRestoreOptions(hasBrewfile, hasMAS, hasVSCode, hasNPM, hasMacOSDefaults, hasShellHistory)
@@ -285,7 +284,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		filesToRestore = selected
 		// Override options from editor
 		options = editorOptions
-	} else if !restoreNoTUI && options.RestoreFiles {
+	} else if !useNoTUI && options.RestoreFiles {
 		// Use TUI multi-select for file selection (only for smaller backups and if user chose to restore files)
 		if len(meta.Files) <= cfg.GetRestoreFilePickerThreshold() {
 			selected, err := tui.FilePickerForm(meta.Files)
@@ -305,6 +304,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 	successCount := 0
 	skippedCount := 0
+	var restoreWarnings []string
 
 	if options.RestoreFiles {
 		for _, fileInfo := range filesToRestore {
@@ -371,6 +371,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		dm := defaults.NewDefaultsManager("")
 		if err := dm.RestoreAll(macosDefaultsFile); err != nil {
 			ui.PrintVerbose("macOS defaults failed: %v", err)
+			restoreWarnings = append(restoreWarnings, fmt.Sprintf("macOS defaults: %v", err))
 		}
 	}
 
@@ -383,7 +384,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		items, err := packager.ParseBrewfile(brewfilePath)
 		if err != nil {
 			ui.PrintWarning("Failed to parse Brewfile: %v", err)
-		} else if !restoreNoTUI && len(items) > 0 {
+		} else if !useNoTUI && len(items) > 0 {
 			// Show package picker if not in no-TUI mode
 			var tuiItems []tui.BrewPackageItem
 			for _, item := range items {
@@ -418,6 +419,11 @@ func runRestore(cmd *cobra.Command, args []string) error {
 					ui.PrintVerbose("Installing %d selected packages...", len(selectedItems))
 					if err := installer.InstallBrewPackages(tempBrewfile); err != nil {
 						ui.PrintWarning("Homebrew failed: %v", err)
+						if brewErr, ok := err.(*packager.BrewInstallError); ok && len(brewErr.FailedPackages) > 0 {
+							restoreWarnings = append(restoreWarnings, fmt.Sprintf("Homebrew failed packages: %s", strings.Join(brewErr.FailedPackages, ", ")))
+						} else {
+							restoreWarnings = append(restoreWarnings, fmt.Sprintf("Homebrew: %v", err))
+						}
 					}
 				}
 			}
@@ -426,29 +432,53 @@ func runRestore(cmd *cobra.Command, args []string) error {
 			ui.PrintVerbose("Installing Homebrew packages...")
 			if err := installer.InstallBrewPackages(brewfilePath); err != nil {
 				ui.PrintWarning("Homebrew failed: %v", err)
+				if brewErr, ok := err.(*packager.BrewInstallError); ok && len(brewErr.FailedPackages) > 0 {
+					restoreWarnings = append(restoreWarnings, fmt.Sprintf("Homebrew failed packages: %s", strings.Join(brewErr.FailedPackages, ", ")))
+				} else {
+					restoreWarnings = append(restoreWarnings, fmt.Sprintf("Homebrew: %v", err))
+				}
 			}
 		}
 	}
 
 	if options.InstallMAS && fileExists(filepath.Join(persistentPackagesDir, "mas-apps.txt")) {
 		ui.PrintVerbose("Installing Mac App Store apps...")
-		_, _ = installer.InstallMASApps(filepath.Join(persistentPackagesDir, "mas-apps.txt"))
+		count, err := installer.InstallMASApps(filepath.Join(persistentPackagesDir, "mas-apps.txt"))
+		if err != nil {
+			restoreWarnings = append(restoreWarnings, fmt.Sprintf("MAS: %v", err))
+		} else {
+			ui.PrintSuccess("Installed %d Mac App Store app(s)", count)
+		}
 	}
 
 	if options.InstallVSCode && fileExists(filepath.Join(persistentPackagesDir, "vscode-extensions.txt")) {
 		ui.PrintVerbose("Installing VS Code extensions...")
-		_, _ = installer.InstallVSCodeExtensions(filepath.Join(persistentPackagesDir, "vscode-extensions.txt"))
+		count, err := installer.InstallVSCodeExtensions(filepath.Join(persistentPackagesDir, "vscode-extensions.txt"))
+		if err != nil {
+			restoreWarnings = append(restoreWarnings, fmt.Sprintf("VS Code extensions: %v", err))
+		} else {
+			ui.PrintSuccess("Installed %d VS Code extension(s)", count)
+		}
 	}
 
 	if options.InstallNPM && fileExists(filepath.Join(persistentPackagesDir, "npm-global.txt")) {
 		ui.PrintVerbose("Installing NPM packages...")
-		_ = installer.InstallNPMPackages(filepath.Join(persistentPackagesDir, "npm-global.txt"))
+		if err := installer.InstallNPMPackages(filepath.Join(persistentPackagesDir, "npm-global.txt")); err != nil {
+			restoreWarnings = append(restoreWarnings, fmt.Sprintf("NPM globals: %v", err))
+		}
 	}
 
 	// Final output
 	ui.PrintSuccess("Restored %d files", successCount)
 	if skippedCount > 0 {
 		ui.PrintDim("  Skipped: %d", skippedCount)
+	}
+	if len(restoreWarnings) > 0 {
+		fmt.Println()
+		ui.PrintWarning("Restore completed with warnings:")
+		for _, warning := range restoreWarnings {
+			ui.PrintDim("  - %s", warning)
+		}
 	}
 
 	return nil
@@ -692,4 +722,13 @@ func runCommand(name string, args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func wrapDecryptError(err error, backupRef, keyPath string) error {
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "identity did not match any of the recipients") ||
+		strings.Contains(errMsg, "incorrect identity for recipient block") {
+		return fmt.Errorf("failed to decrypt %s with key %s\nThis backup was encrypted with a different key.\nRestore the original key from your password manager and retry:\n  stash restore %s -k /path/to/original.stash.key", backupRef, keyPath, backupRef)
+	}
+	return fmt.Errorf("failed to decrypt: %w", err)
 }

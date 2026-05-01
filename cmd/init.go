@@ -72,10 +72,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 		ui.PrintSuccess("Already initialized")
 		ui.PrintDim("  Config: %s", configPath)
 		ui.PrintDim("  Key: %s", keyPath)
+		ui.PrintDim("  Edit config: stash config edit --raw")
+		ui.PrintDim("  Explore commands: stash --help")
 	} else {
 		ui.PrintSuccess("Initialized stash")
 		ui.PrintDim("  Config: %s", configPath)
 		ui.PrintDim("  Key: %s", keyPath)
+		ui.PrintDim("  Edit config: stash config edit --raw")
+		ui.PrintDim("  Explore commands: stash --help")
 		ui.PrintWarning("IMPORTANT: Backup your key to a password manager!")
 	}
 
@@ -88,7 +92,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Println("  - Secrets: .ssh, .gnupg, .aws")
 		fmt.Println("  - Shell history: .zsh_history, .bash_history")
 		fmt.Println("  - macOS defaults: Dock, Finder, trackpad, etc.")
-		fmt.Println("  - Browser data: Chrome, Firefox, Safari")
+		fmt.Println("  - Browser data: disabled by default (opt in via config)")
 		ui.PrintDivider()
 		fmt.Println("Next steps:")
 		fmt.Printf("  1. Backup key: Store %s safely\n", keyPath)

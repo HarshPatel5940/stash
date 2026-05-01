@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 
@@ -15,6 +17,24 @@ import (
 // Installer provides progress-wrapped package installation
 type Installer struct {
 	verbose bool
+}
+
+// BrewInstallError captures brew bundle failure details for restore summaries.
+type BrewInstallError struct {
+	Err            error
+	FailedPackages []string
+	StderrTail     []string
+}
+
+func (e *BrewInstallError) Error() string {
+	if len(e.FailedPackages) == 0 {
+		return fmt.Sprintf("brew bundle failed: %v", e.Err)
+	}
+	return fmt.Sprintf("brew bundle failed: %v (failed: %s)", e.Err, strings.Join(e.FailedPackages, ", "))
+}
+
+func (e *BrewInstallError) Unwrap() error {
+	return e.Err
 }
 
 // NewInstaller creates a new package installer
@@ -113,6 +133,7 @@ func (i *Installer) InstallBrewPackages(brewfilePath string) error {
 		bar.Finish()
 		// Wait for both scanners to finish before reading stderrLines
 		wg.Wait()
+		failedPackages := parseBrewFailedPackages(stderrLines)
 		// Show last few lines of stderr if not verbose
 		if !i.verbose && len(stderrLines) > 0 {
 			// Show last 10 lines
@@ -125,13 +146,49 @@ func (i *Installer) InstallBrewPackages(brewfilePath string) error {
 				fmt.Printf("    %s\n", line)
 			}
 		}
-		return fmt.Errorf("brew bundle failed: %w", err)
+		return &BrewInstallError{
+			Err:            err,
+			FailedPackages: failedPackages,
+			StderrTail:     stderrLines,
+		}
 	}
 
 	// Wait for scanners to finish
 	wg.Wait()
 	bar.Finish()
 	return nil
+}
+
+func parseBrewFailedPackages(lines []string) []string {
+	pkgSet := map[string]struct{}{}
+	re := regexp.MustCompile(`Failed to fetch (.+)$`)
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		matches := re.FindStringSubmatch(trimmed)
+		if len(matches) != 2 {
+			continue
+		}
+
+		parts := strings.Split(matches[1], ",")
+		for _, part := range parts {
+			pkg := strings.TrimSpace(part)
+			if pkg != "" {
+				pkgSet[pkg] = struct{}{}
+			}
+		}
+	}
+
+	if len(pkgSet) == 0 {
+		return nil
+	}
+
+	failed := make([]string, 0, len(pkgSet))
+	for pkg := range pkgSet {
+		failed = append(failed, pkg)
+	}
+	sort.Strings(failed)
+	return failed
 }
 
 // InstallVSCodeExtensions installs VS Code extensions with progress

@@ -309,7 +309,7 @@ func (gt *GitTracker) GetRepos() []GitRepo {
 func (gt *GitTracker) GetReposNeedingAttention() []GitRepo {
 	var needsAttention []GitRepo
 	for _, repo := range gt.repos {
-		if repo.Dirty || repo.UnpushedCount > 0 {
+		if repo.NeedsAttention() {
 			needsAttention = append(needsAttention, repo)
 		}
 	}
@@ -318,7 +318,12 @@ func (gt *GitTracker) GetReposNeedingAttention() []GitRepo {
 
 // NeedsAttention returns true if the repo has uncommitted or unpushed changes
 func (r *GitRepo) NeedsAttention() bool {
-	return r.Dirty || r.UnpushedCount > 0
+	if r.Dirty || r.UnpushedCount > 0 {
+		return true
+	}
+	// A configured remote without upstream tracking often means local work
+	// can't be pushed with a simple `git push`.
+	return !r.HasUpstream && len(r.Remotes) > 0
 }
 
 // GetStatusSummary returns a human-readable status summary
@@ -329,6 +334,9 @@ func (r *GitRepo) GetStatusSummary() string {
 	}
 	if r.UnpushedCount > 0 {
 		parts = append(parts, fmt.Sprintf("%d unpushed", r.UnpushedCount))
+	}
+	if !r.HasUpstream && len(r.Remotes) > 0 {
+		parts = append(parts, "no upstream")
 	}
 	if r.Behind > 0 {
 		parts = append(parts, fmt.Sprintf("%d behind", r.Behind))

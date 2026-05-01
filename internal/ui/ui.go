@@ -234,7 +234,7 @@ func (s *Spinner) Fail() {
 func (s *Spinner) UpdateMessage(message string) {
 	s.message = message
 	if s.active {
-		fmt.Fprintf(s.writer, "\r%s %s...", infoStyle.Render("*"), s.message)
+		fmt.Fprintf(s.writer, "%s %s...", infoStyle.Render("*"), s.message)
 	}
 }
 

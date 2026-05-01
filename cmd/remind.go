@@ -69,16 +69,25 @@ func runRemind(cmd *cobra.Command, args []string) error {
 
 	// Show repos needing attention
 	fmt.Printf("%d of %d repos need attention:\n", len(needsAttention), len(allRepos))
+	uncommittedCount := 0
+	unpushedCount := 0
+	noUpstreamCount := 0
 
 	for _, repo := range needsAttention {
-		shortPath := shortenRemindPath(repo.Path, homeDir)
+		shortPath := truncateRemindPath(shortenRemindPath(repo.Path, homeDir), 80)
 		issues := []string{}
 
 		if repo.Dirty {
 			issues = append(issues, "uncommitted")
+			uncommittedCount++
 		}
 		if repo.UnpushedCount > 0 {
 			issues = append(issues, fmt.Sprintf("%d unpushed", repo.UnpushedCount))
+			unpushedCount++
+		}
+		if !repo.HasUpstream && len(repo.Remotes) > 0 {
+			issues = append(issues, "no upstream")
+			noUpstreamCount++
 		}
 		if repo.Behind > 0 {
 			issues = append(issues, fmt.Sprintf("%d behind", repo.Behind))
@@ -86,6 +95,7 @@ func runRemind(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("  %s %s (%s)\n", ui.IconWarning, shortPath, strings.Join(issues, ", "))
 	}
+	fmt.Printf("\n  Uncommitted: %d  Unpushed: %d  No upstream: %d\n", uncommittedCount, unpushedCount, noUpstreamCount)
 
 	// Verbose: show all repos
 	if remindVerbose {
@@ -93,7 +103,7 @@ func runRemind(cmd *cobra.Command, args []string) error {
 		ui.PrintDivider()
 		fmt.Printf("All repositories (%d):\n", len(allRepos))
 		for _, repo := range allRepos {
-			shortPath := shortenRemindPath(repo.Path, homeDir)
+			shortPath := truncateRemindPath(shortenRemindPath(repo.Path, homeDir), 80)
 			if repo.NeedsAttention() {
 				fmt.Printf("  %s %s\n", ui.IconWarning, shortPath)
 			} else {
@@ -110,4 +120,18 @@ func shortenRemindPath(path, homeDir string) string {
 		return "~" + path[len(homeDir):]
 	}
 	return path
+}
+
+func truncateRemindPath(path string, maxLen int) string {
+	if len(path) <= maxLen {
+		return path
+	}
+	if maxLen <= 3 {
+		return path[:maxLen]
+	}
+	keepTail := maxLen - 6
+	if keepTail < 1 {
+		keepTail = 1
+	}
+	return path[:3] + "..." + path[len(path)-keepTail:]
 }
