@@ -14,7 +14,9 @@ import (
 	"github.com/harshpatel5940/stash/internal/config"
 	"github.com/harshpatel5940/stash/internal/crypto"
 	"github.com/harshpatel5940/stash/internal/defaults"
+	"github.com/harshpatel5940/stash/internal/dockprefs"
 	"github.com/harshpatel5940/stash/internal/docker"
+	"github.com/harshpatel5940/stash/internal/firewall"
 	stasherrors "github.com/harshpatel5940/stash/internal/errors"
 	"github.com/harshpatel5940/stash/internal/finder"
 	"github.com/harshpatel5940/stash/internal/fonts"
@@ -26,6 +28,7 @@ import (
 	"github.com/harshpatel5940/stash/internal/recovery"
 	"github.com/harshpatel5940/stash/internal/stats"
 	"github.com/harshpatel5940/stash/internal/ui"
+	"github.com/harshpatel5940/stash/internal/wallpaper"
 	"github.com/spf13/cobra"
 )
 
@@ -222,6 +225,9 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		{"Fonts", func() error { return backupFonts(tempDir, meta) }},
 		{"Docker", func() error { return backupDocker(tempDir, meta, cfg) }},
 		{"Kubernetes", func() error { return backupKubernetes(tempDir, meta) }},
+		{"DockPrefs", func() error { return backupDockPrefs(tempDir, meta) }},
+		{"Wallpaper", func() error { return backupWallpaper(tempDir, meta) }},
+		{"Firewall", func() error { return backupFirewall(tempDir, meta) }},
 	}
 
 	if cfg.IsBrowsersEnabled() && !backupSkipBrowsers {
@@ -1032,6 +1038,86 @@ func backupKubernetes(tempDir string, meta *metadata.Metadata) error {
 		fmt.Printf("  ✓ Backed up Kubernetes configuration (%d files)\n", count)
 	}
 
+	return nil
+}
+
+func backupDockPrefs(tempDir string, meta *metadata.Metadata) error {
+	outDir := filepath.Join(tempDir, "dock")
+	if backupDryRun {
+		if backupVerbose {
+			fmt.Println("  [DRY RUN] Would backup Dock layout (orientation, autohide, pinned apps)")
+		}
+		return nil
+	}
+	if err := dockprefs.NewManager(outDir).BackupAll(); err != nil {
+		if backupVerbose {
+			fmt.Printf("  ⚠️  Dock prefs: %v\n", err)
+		}
+		return nil
+	}
+	meta.AddFileInfo(metadata.FileInfo{
+		OriginalPath: "com.apple.dock (portable)",
+		BackupPath:   "dock/dock.json",
+		Mode:         0644,
+	})
+	if backupVerbose {
+		fmt.Println("  ✓ Backed up Dock layout")
+	}
+	return nil
+}
+
+func backupWallpaper(tempDir string, meta *metadata.Metadata) error {
+	outDir := filepath.Join(tempDir, "wallpaper")
+	if backupDryRun {
+		if backupVerbose {
+			fmt.Println("  [DRY RUN] Would backup desktop wallpaper image(s)")
+		}
+		return nil
+	}
+	if err := wallpaper.NewManager(outDir).BackupAll(); err != nil {
+		if backupVerbose {
+			fmt.Printf("  ⚠️  Wallpaper: %v\n", err)
+		}
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "wallpaper.json")); err == nil {
+		meta.AddFileInfo(metadata.FileInfo{
+			OriginalPath: "Desktop wallpaper",
+			BackupPath:   "wallpaper/wallpaper.json",
+			Mode:         0644,
+		})
+		if backupVerbose {
+			fmt.Println("  ✓ Backed up desktop wallpaper")
+		}
+	}
+	return nil
+}
+
+func backupFirewall(tempDir string, meta *metadata.Metadata) error {
+	if !firewall.Available() {
+		return nil
+	}
+	outFile := filepath.Join(tempDir, "firewall", "firewall.json")
+	if backupDryRun {
+		if backupVerbose {
+			fmt.Println("  [DRY RUN] Would backup Application Firewall state")
+		}
+		return nil
+	}
+	if err := firewall.NewManager(outFile).BackupAll(); err != nil {
+		if backupVerbose {
+			fmt.Printf("  ⚠️  Firewall: %v\n", err)
+		}
+		return nil
+	}
+	meta.AddFileInfo(metadata.FileInfo{
+		OriginalPath: "Application Firewall",
+		BackupPath:   "firewall/firewall.json",
+		Mode:         0644,
+	})
+	if backupVerbose {
+		fmt.Println("  ✓ Backed up Application Firewall state")
+	}
 	return nil
 }
 

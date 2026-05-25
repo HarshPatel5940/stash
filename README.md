@@ -20,6 +20,13 @@ Encrypted backup for macOS dotfiles, secrets, and configs.
 
 ## Install
 
+**Curl (no Homebrew required):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/harshpatel5940/stash/main/install.sh | bash
+```
+Defaults to `/opt/homebrew/bin` on Apple Silicon (if present), otherwise `/usr/local/bin`.
+Set `STASH_INSTALL_DIR` to override.
+
 **Homebrew:**
 ```bash
 brew install harshpatel5940/tap/stash
@@ -37,6 +44,8 @@ go install github.com/harshpatel5940/stash@latest
 ```bash
 # Setup
 stash init
+# Skip dependency installs:
+# stash init --skip-deps
 
 # Backup
 stash backup
@@ -66,6 +75,29 @@ stash restore 1
 
 ---
 
+## Reset Recovery Coverage
+
+**Covered by stash:**
+- Homebrew restore is resilient (per-package retries + progress).
+- Finder defaults (hidden files, file extensions) and menu bar clock.
+- Dock layout (position, autohide, pinned apps with `dockutil`).
+- Desktop wallpaper restore.
+- Application Firewall rules.
+
+**Requires dependencies (auto-installed by `stash init` when missing):**
+- Homebrew, `mas`, `dockutil`, Node.js/npm, and VS Code (for `code` CLI).
+  - Note: the `code` CLI may still require running **“Shell Command: Install 'code'”** inside VS Code.
+
+**Common reset gaps (manual today):**
+- Keychain passwords/certificates.
+- Login Items/LaunchAgents.
+- TCC privacy permissions (Full Disk Access, Accessibility, etc.).
+- Wi‑Fi/VPN/Proxy profiles.
+- Printers and drivers.
+- Apple ID/iCloud sign-in + service re‑enable.
+
+---
+
 ## Flags
 
 **Backup:**
@@ -85,6 +117,9 @@ stash restore 1
 **Info:**
 - `stash info <id|name>` - Show backup metadata and note
 - `stash info <id|name> -m "..."` - Update note for a backup
+
+**Init:**
+- `stash init --skip-deps` - Skip auto-installing Homebrew and helper CLIs
 
 **Config:**
 - `stash config edit` - Interactive TUI editor for common settings
@@ -172,6 +207,19 @@ make test
 ## License
 
 MIT - see [LICENSE](LICENSE)
+
+---
+
+## Security
+
+Please report security issues via GitHub Security Advisories:
+[SECURITY.md](SECURITY.md)
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 

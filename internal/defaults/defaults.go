@@ -143,8 +143,11 @@ func (d *DefaultsManager) RestoreAll(backupFile string) error {
 		fmt.Printf("  ✓ Restored %s\n", domain.Domain)
 	}
 
-	fmt.Println("\n⚠️  Note: Some changes require logout/restart to take effect")
-	fmt.Println("   Consider running: killall Dock Finder SystemUIServer")
+	fmt.Println("\n  Restarting preference daemon and UI agents...")
+	for _, proc := range []string{"cfprefsd", "Dock", "Finder", "SystemUIServer", "ControlCenter"} {
+		_ = exec.Command("killall", proc).Run()
+	}
+	fmt.Println("  ✓ Restarted (some changes may still need logout to fully apply)")
 
 	return nil
 }
