@@ -8,13 +8,24 @@ Encrypted backup for macOS dotfiles, secrets, and configs.
 
 ---
 
-## ⚠️ Critical
+## why?
 
-**Need BOTH to restore:**
-- 🔑 `~/.stash.key` → Password manager
-- 📦 `.tar.gz.age` → Cloud/external drive
+No unified tool. Pieces exist (Homebrew recovery, dotfile repos, secret managers) but nothing automates everything together.
 
-**Store separately. Lose either = lose everything.**
+## How?
+
+**Stash** encrypts & backs up your entire macOS setup (dotfiles, secrets, packages, system prefs, git repos). Restore selectively, if needed. Encryption with `age`, split key storage for security.
+
+## What's Covered
+
+- **Dotfiles**: `.zshrc`, git configs, shell aliases
+- **Secrets**: SSH keys, GPG keys, AWS credentials
+- **Dev Secrets**: `.env`, `.pem` files from projects
+- **Configs**: `~/.config` (smart exclusions: `node_modules`, `.git`, `vendor`)
+- **Packages**: Homebrew, npm, VS Code extensions, Mac App Store
+- **Browser Data**: Bookmarks, extensions, settings (optional, disabled by default)
+- **Git Repos**: All repos tracked for easy re-cloning
+- **System**: macOS defaults, fonts, shell history
 
 ---
 
@@ -62,46 +73,10 @@ stash restore 1
 
 ---
 
-## What Gets Backed Up
-
-- **Dotfiles**: Shell configs (`.zshrc`), git configs, etc.
-- **Secrets**: SSH keys, GPG keys, AWS credentials.
-- **Dev Secrets**: `.env` and `.pem` files from your projects.
-- **Configs**: `~/.config` (with smart exclusions like `node_modules`).
-- **Packages**: Homebrew, npm, VS Code extensions, Mac App Store apps.
-- **Browser Data**: Optional bookmarks/extensions/settings backup (disabled by default).
-- **Git Repos**: Tracks all your git repositories for easy re-cloning.
-- **System**: macOS defaults/preferences, custom fonts, shell history.
-
----
-
-## Reset Recovery Coverage
-
-**Covered by stash:**
-- Homebrew restore is resilient (per-package retries + progress).
-- Finder defaults (hidden files, file extensions) and menu bar clock.
-- Dock layout (position, autohide, pinned apps with `dockutil`).
-- Desktop wallpaper restore.
-- Application Firewall rules.
-
-**Requires dependencies (auto-installed by `stash init` when missing):**
-- Homebrew, `mas`, `dockutil`, Node.js/npm, and VS Code (for `code` CLI).
-  - Note: the `code` CLI may still require running **“Shell Command: Install 'code'”** inside VS Code.
-
-**Common reset gaps (manual today):**
-- Keychain passwords/certificates.
-- Login Items/LaunchAgents.
-- TCC privacy permissions (Full Disk Access, Accessibility, etc.).
-- Wi‑Fi/VPN/Proxy profiles.
-- Printers and drivers.
-- Apple ID/iCloud sign-in + service re‑enable.
-
----
-
 ## Flags
 
 **Backup:**
-- `--skip-browsers` - Force-skip browser data for this run
+- `--skip-browsers` - Skip browser data for this run
 - `--keep <n>` - Keep only last N backups (default: 5)
 - `-m, --message` - Add note/message to backup
 - `--dry-run` - Preview what will be backed up
@@ -124,30 +99,6 @@ stash restore 1
 **Config:**
 - `stash config edit` - Interactive TUI editor for common settings
 - `stash config edit --raw` - Open raw YAML in VISUAL/EDITOR/vim
-
----
-
-## Interactive Restore
-
-By default, restore opens an interactive TUI to select what to restore:
-
-1. **Choose categories**: multi-select across dotfiles, Homebrew, VS Code, macOS defaults, etc.
-2. **Pick files**: if dotfiles selected, choose individual files to restore
-3. **Pick packages**: if Homebrew selected, choose to install all or pick individual packages
-
-Use `--editor` for a git-rebase style text editor instead:
-
-```
-pick [BREW] Install Homebrew packages
-drop [MAS ] Install Mac App Store apps
-pick [CODE] Install VS Code extensions
-
-pick [FILE] ~/.bashrc (2.3 KB)
-drop [FILE] ~/.ssh/id_rsa (skip this)
-pick [DIR ] ~/.config
-```
-
-Change `pick` → `drop` to skip. Save & close.
 
 ---
 
@@ -177,6 +128,29 @@ browsers:
 
 ---
 
+## Reset Recovery Coverage
+
+**Covered by stash:**
+- Homebrew restore is resilient (per-package retries + progress).
+- Finder defaults (hidden files, file extensions) and menu bar clock.
+- Dock layout (position, autohide, pinned apps with `dockutil`).
+- Desktop wallpaper restore.
+- Application Firewall rules.
+
+**Requires dependencies (auto-installed by `stash init` when missing):**
+- Homebrew, `mas`, `dockutil`, Node.js/npm, and VS Code (for `code` CLI).
+  - Note: the `code` CLI may still require running **"Shell Command: Install 'code'"** inside VS Code.
+
+**Common reset gaps (manual today):**
+- Keychain passwords/certificates.
+- Login Items/LaunchAgents.
+- TCC privacy permissions (Full Disk Access, Accessibility, etc.).
+- Wi‑Fi/VPN/Proxy profiles.
+- Printers and drivers.
+- Apple ID/iCloud sign-in + service re‑enable.
+
+---
+
 ## After Restore
 
 ```bash
@@ -193,34 +167,25 @@ cat packages/vscode-extensions.txt | xargs -L 1 code --install-extension
 
 ---
 
-## Development
+## ⚠️ Critical Warning
 
-See [CONTRIBUTING.md](CONTRIBUTING.md)
+**Need BOTH to restore:**
+- 🔑 `~/.stash.key` → Store in password manager or secure location
+- 📦 `.tar.gz.age` → Store in cloud or external drive
+
+**Store separately. Lose either one = lose everything.** Key without backup is useless. Backup without key is inaccessible.
+
+---
+
+## Development
 
 ```bash
 make build
 make test
 ```
 
----
-
-## License
-
-MIT - see [LICENSE](LICENSE)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ---
 
-## Security
-
-Please report security issues via GitHub Security Advisories:
-[SECURITY.md](SECURITY.md)
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
----
-
-**[GitHub](https://github.com/harshpatel5940/stash)** • **[Issues](https://github.com/harshpatel5940/stash/issues)**
+**License:** MIT ([LICENSE](LICENSE)) | **Security:** [SECURITY.md](SECURITY.md) | **[Issues](https://github.com/harshpatel5940/stash/issues)**
