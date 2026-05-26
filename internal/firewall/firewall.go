@@ -14,13 +14,13 @@ import (
 const sfwBin = "/usr/libexec/ApplicationFirewall/socketfilterfw"
 
 type State struct {
-	GlobalEnabled bool     `json:"global_enabled"`
-	StealthMode   bool     `json:"stealth_mode"`
-	BlockAll      bool     `json:"block_all"`
-	AllowSigned   bool     `json:"allow_signed"`
-	AllowSignedApp bool    `json:"allow_signed_app"`
-	LoggingMode   bool     `json:"logging_mode"`
-	Apps          []AppRule `json:"apps"`
+	GlobalEnabled  bool      `json:"global_enabled"`
+	StealthMode    bool      `json:"stealth_mode"`
+	BlockAll       bool      `json:"block_all"`
+	AllowSigned    bool      `json:"allow_signed"`
+	AllowSignedApp bool      `json:"allow_signed_app"`
+	LoggingMode    bool      `json:"logging_mode"`
+	Apps           []AppRule `json:"apps"`
 }
 
 type AppRule struct {

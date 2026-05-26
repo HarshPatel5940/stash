@@ -14,12 +14,12 @@ import (
 	"github.com/harshpatel5940/stash/internal/defaults"
 	"github.com/harshpatel5940/stash/internal/dockprefs"
 	"github.com/harshpatel5940/stash/internal/firewall"
-	"github.com/harshpatel5940/stash/internal/wallpaper"
 	"github.com/harshpatel5940/stash/internal/incremental"
 	"github.com/harshpatel5940/stash/internal/metadata"
 	"github.com/harshpatel5940/stash/internal/packager"
 	"github.com/harshpatel5940/stash/internal/tui"
 	"github.com/harshpatel5940/stash/internal/ui"
+	"github.com/harshpatel5940/stash/internal/wallpaper"
 	"github.com/spf13/cobra"
 )
 

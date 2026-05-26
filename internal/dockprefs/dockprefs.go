@@ -25,17 +25,17 @@ type DockApp struct {
 }
 
 type DockPrefs struct {
-	Orientation         string  `json:"orientation,omitempty"`
-	TileSize            float64 `json:"tilesize,omitempty"`
-	Autohide            bool    `json:"autohide"`
-	AutohideDelay       float64 `json:"autohide_delay"`
-	AutohideTimeMod     float64 `json:"autohide_time_modifier"`
-	Magnification       bool    `json:"magnification"`
-	LargeSize           float64 `json:"largesize,omitempty"`
-	MinEffect           string  `json:"mineffect,omitempty"`
-	ShowRecents         bool    `json:"show_recents"`
-	PersistentApps      []DockApp `json:"persistent_apps"`
-	PersistentOthers    []DockApp `json:"persistent_others"`
+	Orientation      string    `json:"orientation,omitempty"`
+	TileSize         float64   `json:"tilesize,omitempty"`
+	Autohide         bool      `json:"autohide"`
+	AutohideDelay    float64   `json:"autohide_delay"`
+	AutohideTimeMod  float64   `json:"autohide_time_modifier"`
+	Magnification    bool      `json:"magnification"`
+	LargeSize        float64   `json:"largesize,omitempty"`
+	MinEffect        string    `json:"mineffect,omitempty"`
+	ShowRecents      bool      `json:"show_recents"`
+	PersistentApps   []DockApp `json:"persistent_apps"`
+	PersistentOthers []DockApp `json:"persistent_others"`
 }
 
 type Manager struct {
