@@ -1,7 +1,6 @@
 package packager
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,7 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
+	"time"
 
 	"github.com/harshpatel5940/stash/internal/ui"
 )
@@ -42,121 +41,238 @@ func NewInstaller(verbose bool) *Installer {
 	return &Installer{verbose: verbose}
 }
 
-// InstallBrewPackages installs Homebrew packages from a Brewfile with progress
 func (i *Installer) InstallBrewPackages(brewfilePath string) error {
 	if !commandExists("brew") {
 		return fmt.Errorf("brew not installed")
 	}
 
-	// Count packages in Brewfile
-	count := countBrewfilePackages(brewfilePath)
-	if count == 0 {
+	items, err := ParseBrewfile(brewfilePath)
+	if err != nil {
+		return fmt.Errorf("failed to parse Brewfile: %w", err)
+	}
+	if len(items) == 0 {
 		fmt.Println("  No packages found in Brewfile")
 		return nil
 	}
 
-	fmt.Printf("  Installing %d packages from Brewfile...\n", count)
-
-	// Create progress bar
-	bar := ui.NewProgressBar(count, "Homebrew")
-
-	// Clear any existing lock file to prevent hangs
+	// Clear any stale update lock that can deadlock per-package installs.
 	brewPrefix := os.Getenv("HOMEBREW_PREFIX")
 	if brewPrefix == "" {
-		// Try to get it from brew command
 		if out, err := exec.Command("brew", "--prefix").Output(); err == nil {
 			brewPrefix = strings.TrimSpace(string(out))
 		}
 	}
 	if brewPrefix != "" {
-		lockFile := filepath.Join(brewPrefix, "var", "homebrew", "locks", "update")
-		_ = os.Remove(lockFile) // Ignore error if file doesn't exist
+		_ = os.Remove(filepath.Join(brewPrefix, "var", "homebrew", "locks", "update"))
 	}
 
-	// Run brew bundle and parse output
-	cmd := exec.Command("brew", "bundle", "--file="+brewfilePath)
-	cmd.Env = append(os.Environ(), "HOMEBREW_NO_AUTO_UPDATE=1")
+	env := append(os.Environ(), "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_ENV_HINTS=1")
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stdout pipe: %w", err)
+	// Group counts for the user-facing summary line.
+	var taps, brews, casks, masApps int
+	for _, it := range items {
+		switch it.Type {
+		case "tap":
+			taps++
+		case "brew":
+			brews++
+		case "cask":
+			casks++
+		case "mas":
+			masApps++
+		}
 	}
+	fmt.Printf("  Installing %d Brewfile entries (%d taps, %d brews, %d casks, %d MAS)...\n",
+		len(items), taps, brews, casks, masApps)
 
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stderr pipe: %w", err)
-	}
+	bar := ui.NewProgressBar(len(items), "Homebrew")
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start brew bundle: %w", err)
-	}
+	var (
+		failed  []string
+		skipped int
+		ok      int
+		errTail []string
+	)
 
-	var stderrLines []string
-	var stderrMutex sync.Mutex
-	var wg sync.WaitGroup
+	for _, it := range items {
+		bar.Describe(fmt.Sprintf("Homebrew · %s", truncate(it.Name, 32)))
 
-	// Parse stdout for progress
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			line := scanner.Text()
-			// brew bundle outputs "Installing <package>" or "Using <package>"
-			if strings.HasPrefix(line, "Installing") || strings.HasPrefix(line, "Using") ||
-				strings.HasPrefix(line, "Brewing") || strings.Contains(line, "already installed") {
-				bar.Add(1)
+		if i.brewItemInstalled(it) {
+			skipped++
+			bar.Add(1)
+			continue
+		}
+
+		out, err := i.installBrewItemWithRetry(it, env, 2)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("%s %s", it.Type, it.Name))
+			tail := lastNonEmptyLine(out)
+			if tail != "" {
+				errTail = append(errTail, fmt.Sprintf("  %s %s: %s", it.Type, it.Name, tail))
 			}
 			if i.verbose {
-				fmt.Printf("    %s\n", line)
+				fmt.Printf("\n    ✗ %s %s failed:\n%s\n", it.Type, it.Name, indent(out, "      "))
 			}
+		} else {
+			ok++
 		}
-	}()
+		bar.Add(1)
+	}
+	bar.Finish()
 
-	// Capture stderr for errors
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			line := scanner.Text()
-			stderrMutex.Lock()
-			stderrLines = append(stderrLines, line)
-			stderrMutex.Unlock()
-			if i.verbose {
-				fmt.Printf("    [stderr] %s\n", line)
-			}
-		}
-	}()
-
-	if err := cmd.Wait(); err != nil {
-		bar.Finish()
-		// Wait for both scanners to finish before reading stderrLines
-		wg.Wait()
-		failedPackages := parseBrewFailedPackages(stderrLines)
-		// Show last few lines of stderr if not verbose
-		if !i.verbose && len(stderrLines) > 0 {
-			// Show last 10 lines
-			start := len(stderrLines) - 10
-			if start < 0 {
-				start = 0
-			}
-			fmt.Println("\n  Last errors from brew bundle:")
-			for _, line := range stderrLines[start:] {
-				fmt.Printf("    %s\n", line)
-			}
+	fmt.Printf("  ✓ %d installed, ⤳ %d already present, ✗ %d failed\n", ok, skipped, len(failed))
+	if len(failed) > 0 {
+		fmt.Println("  Failed entries:")
+		for _, line := range errTail {
+			fmt.Println(line)
 		}
 		return &BrewInstallError{
-			Err:            err,
-			FailedPackages: failedPackages,
-			StderrTail:     stderrLines,
+			Err:            fmt.Errorf("%d package(s) failed", len(failed)),
+			FailedPackages: failed,
+			StderrTail:     errTail,
 		}
 	}
-
-	// Wait for scanners to finish
-	wg.Wait()
-	bar.Finish()
 	return nil
+}
+
+// installBrewItemWithRetry runs the appropriate install command for one
+// Brewfile entry, retrying transient (network / fetch) errors up to `retries`
+// extra times with a short backoff.
+func (i *Installer) installBrewItemWithRetry(it BrewfileItem, env []string, retries int) (string, error) {
+	var lastOut []byte
+	var lastErr error
+	for attempt := 0; attempt <= retries; attempt++ {
+		args := brewInstallArgs(it)
+		if args == nil {
+			return "", fmt.Errorf("unsupported entry type: %s", it.Type)
+		}
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return string(out), nil
+		}
+		lastOut, lastErr = out, err
+		if !isTransientBrewError(string(out)) {
+			break
+		}
+		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+	}
+	return string(lastOut), lastErr
+}
+
+func brewInstallArgs(it BrewfileItem) []string {
+	switch it.Type {
+	case "tap":
+		return []string{"brew", "tap", it.Name}
+	case "brew":
+		return []string{"brew", "install", "--formula", it.Name}
+	case "cask":
+		return []string{"brew", "install", "--cask", it.Name}
+	case "mas":
+		id := extractMASID(it.RawLine)
+		if id == "" {
+			return nil
+		}
+		return []string{"mas", "install", id}
+	}
+	return nil
+}
+
+// brewItemInstalled does a cheap pre-check so we skip work and avoid network
+// hits for the common case where most of the Brewfile is already satisfied.
+func (i *Installer) brewItemInstalled(it BrewfileItem) bool {
+	switch it.Type {
+	case "brew":
+		return exec.Command("brew", "list", "--formula", "--versions", it.Name).Run() == nil
+	case "cask":
+		return exec.Command("brew", "list", "--cask", "--versions", it.Name).Run() == nil
+	case "tap":
+		out, err := exec.Command("brew", "tap").Output()
+		return err == nil && containsLine(string(out), it.Name)
+	case "mas":
+		id := extractMASID(it.RawLine)
+		if id == "" || !commandExists("mas") {
+			return false
+		}
+		out, err := exec.Command("mas", "list").Output()
+		return err == nil && strings.Contains(string(out), id+" ")
+	}
+	return false
+}
+
+// isTransientBrewError matches the classic "retry-worthy" failures: HTTP
+// fetch errors, GitHub rate limits, partial downloads. Compilation / linking
+// failures are returned as-is so we don't waste minutes retrying them.
+func isTransientBrewError(output string) bool {
+	lower := strings.ToLower(output)
+	needles := []string{
+		"failed to fetch",
+		"download failed",
+		"connection reset",
+		"connection refused",
+		"could not resolve host",
+		"network is unreachable",
+		"operation timed out",
+		"timeout was reached",
+		"curl: (",
+		"sha256 mismatch",
+		"http 5",
+		"http error 5",
+		"rate limit",
+	}
+	for _, n := range needles {
+		if strings.Contains(lower, n) {
+			return true
+		}
+	}
+	return false
+}
+
+var masIDRe = regexp.MustCompile(`id:\s*(\d+)`)
+
+func extractMASID(line string) string {
+	m := masIDRe.FindStringSubmatch(line)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
+
+func containsLine(haystack, needle string) bool {
+	for _, line := range strings.Split(haystack, "\n") {
+		if strings.TrimSpace(line) == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
+}
+
+func lastNonEmptyLine(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for j := len(lines) - 1; j >= 0; j-- {
+		if t := strings.TrimSpace(lines[j]); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+func indent(s, prefix string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+		b.WriteString(prefix)
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func parseBrewFailedPackages(lines []string) []string {

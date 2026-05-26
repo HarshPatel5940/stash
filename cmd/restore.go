@@ -12,11 +12,14 @@ import (
 	"github.com/harshpatel5940/stash/internal/config"
 	"github.com/harshpatel5940/stash/internal/crypto"
 	"github.com/harshpatel5940/stash/internal/defaults"
+	"github.com/harshpatel5940/stash/internal/dockprefs"
+	"github.com/harshpatel5940/stash/internal/firewall"
 	"github.com/harshpatel5940/stash/internal/incremental"
 	"github.com/harshpatel5940/stash/internal/metadata"
 	"github.com/harshpatel5940/stash/internal/packager"
 	"github.com/harshpatel5940/stash/internal/tui"
 	"github.com/harshpatel5940/stash/internal/ui"
+	"github.com/harshpatel5940/stash/internal/wallpaper"
 	"github.com/spf13/cobra"
 )
 
@@ -192,6 +195,9 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 	packagesDir := filepath.Join(extractDir, "packages")
 	macosDefaultsFile := filepath.Join(extractDir, "macos-defaults", "macos-defaults.json")
+	dockPrefsFile := filepath.Join(extractDir, "dock", "dock.json")
+	wallpaperFile := filepath.Join(extractDir, "wallpaper", "wallpaper.json")
+	firewallFile := filepath.Join(extractDir, "firewall", "firewall.json")
 
 	hasBrewfile := fileExists(filepath.Join(packagesDir, "Brewfile"))
 	hasMAS := fileExists(filepath.Join(packagesDir, "mas-apps.txt"))
@@ -372,6 +378,28 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		if err := dm.RestoreAll(macosDefaultsFile); err != nil {
 			ui.PrintVerbose("macOS defaults failed: %v", err)
 			restoreWarnings = append(restoreWarnings, fmt.Sprintf("macOS defaults: %v", err))
+		}
+	}
+
+	// Gate these on the same checkbox as macOS defaults — conceptually they
+	// belong to the same "system settings" bucket and the user already chose
+	// to restore them by ticking that box.
+	if options.RestoreMacOSDefaults && fileExists(dockPrefsFile) {
+		ui.PrintVerbose("Restoring Dock layout...")
+		if err := dockprefs.NewManager("").Restore(dockPrefsFile); err != nil {
+			restoreWarnings = append(restoreWarnings, fmt.Sprintf("Dock: %v", err))
+		}
+	}
+	if options.RestoreMacOSDefaults && fileExists(wallpaperFile) {
+		ui.PrintVerbose("Restoring wallpaper...")
+		if err := wallpaper.NewManager("").Restore(wallpaperFile); err != nil {
+			restoreWarnings = append(restoreWarnings, fmt.Sprintf("Wallpaper: %v", err))
+		}
+	}
+	if options.RestoreMacOSDefaults && fileExists(firewallFile) {
+		ui.PrintVerbose("Restoring firewall state (sudo will prompt)...")
+		if err := firewall.NewManager("").Restore(firewallFile); err != nil {
+			restoreWarnings = append(restoreWarnings, fmt.Sprintf("Firewall: %v", err))
 		}
 	}
 

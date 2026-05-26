@@ -211,13 +211,13 @@ func NewSpinner(message string) *Spinner {
 // Start starts the spinner
 func (s *Spinner) Start() {
 	s.active = true
-	fmt.Fprintf(s.writer, "%s %s...", infoStyle.Render("*"), s.message)
+	fmt.Fprintf(s.writer, "%s %s...\n", infoStyle.Render("*"), s.message)
 }
 
 // Stop stops the spinner with success
 func (s *Spinner) Stop() {
 	if s.active {
-		fmt.Fprintf(s.writer, "\r%s %s   \n", IconSuccess, s.message)
+		fmt.Fprintf(s.writer, "%s %s\n", IconSuccess, s.message)
 		s.active = false
 	}
 }
@@ -225,7 +225,7 @@ func (s *Spinner) Stop() {
 // Fail stops the spinner with failure
 func (s *Spinner) Fail() {
 	if s.active {
-		fmt.Fprintf(s.writer, "\r%s %s   \n", IconError, s.message)
+		fmt.Fprintf(s.writer, "%s %s\n", IconError, s.message)
 		s.active = false
 	}
 }
@@ -234,7 +234,7 @@ func (s *Spinner) Fail() {
 func (s *Spinner) UpdateMessage(message string) {
 	s.message = message
 	if s.active {
-		fmt.Fprintf(s.writer, "%s %s...", infoStyle.Render("*"), s.message)
+		fmt.Fprintf(s.writer, "%s %s...\n", infoStyle.Render("*"), s.message)
 	}
 }
 

@@ -20,6 +20,9 @@ func TestInitCmd(t *testing.T) {
 	oldHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpHome)
 	defer os.Setenv("HOME", oldHome)
+	oldSkip := os.Getenv("STASH_SKIP_DEPS")
+	os.Setenv("STASH_SKIP_DEPS", "1")
+	defer os.Setenv("STASH_SKIP_DEPS", oldSkip)
 
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
@@ -82,6 +85,9 @@ func TestBackupCmd(t *testing.T) {
 	oldHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpHome)
 	defer os.Setenv("HOME", oldHome)
+	oldSkip := os.Getenv("STASH_SKIP_DEPS")
+	os.Setenv("STASH_SKIP_DEPS", "1")
+	defer os.Setenv("STASH_SKIP_DEPS", oldSkip)
 
 	rootCmd.SetArgs([]string{"init"})
 	rootCmd.SetOut(io.Discard)
