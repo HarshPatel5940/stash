@@ -395,7 +395,7 @@ backup-2024-12-27-153045.tar.gz.age (encrypted)
 
 ```json
 {
-  "version": "1.4.0",
+  "version": "1.4.1",
   "timestamp": "2024-12-27T15:30:45Z",
   "hostname": "macbook-pro",
   "username": "user",
