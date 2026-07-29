@@ -50,6 +50,16 @@ go install github.com/harshpatel5940/stash@latest
 
 ---
 
+## ⚠️ Critical Warning
+
+**Need BOTH to restore:**
+- 🔑 `~/.stash.key` → Store in password manager or secure location
+- 📦 `.tar.gz.age` → Store in cloud or external drive
+
+**Store separately. Lose either one = lose everything.** Key without backup is useless. Backup without key is inaccessible.
+
+---
+
 ## Usage
 
 ```bash
@@ -164,16 +174,6 @@ cat packages/vscode-extensions.txt | xargs -L 1 code --install-extension
 # Restart terminal
 # Test SSH, AWS, etc.
 ```
-
----
-
-## ⚠️ Critical Warning
-
-**Need BOTH to restore:**
-- 🔑 `~/.stash.key` → Store in password manager or secure location
-- 📦 `.tar.gz.age` → Store in cloud or external drive
-
-**Store separately. Lose either one = lose everything.** Key without backup is useless. Backup without key is inaccessible.
 
 ---
 
